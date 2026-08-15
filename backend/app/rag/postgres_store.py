@@ -9,22 +9,16 @@ import jieba
 import psycopg
 from langchain_core.documents import Document
 from pgvector import Vector
-from pgvector.psycopg import register_vector
 from psycopg import sql
-from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
-from app.core.config import POSTGRES_CONNECT_TIMEOUT, POSTGRES_DSN
+from app.core.db import connect, PostgreSQLConfigurationError
 from app.rag.metadata import FilterCatalog, RetrievalFilters
 
 
 logger = logging.getLogger(__name__)
 
 REBUILD_LOCK_NAME = "school_knowledge_rebuild"
-
-
-class PostgreSQLConfigurationError(RuntimeError):
-    """Raised when the PostgreSQL connection is not configured."""
 
 
 class PostgreSQLSchemaError(RuntimeError):
@@ -47,40 +41,6 @@ def tokenize_for_search(text: str) -> list[str]:
             and any(character.isalnum() for character in token)
         )
     ]
-
-
-def _normalized_dsn() -> str:
-    if not POSTGRES_DSN:
-        raise PostgreSQLConfigurationError(
-            "POSTGRES_DSN is not configured. Example: "
-            "postgresql://postgres:<password>@127.0.0.1:5432/postgres"
-        )
-
-    return POSTGRES_DSN.replace(
-        "postgresql+psycopg://",
-        "postgresql://",
-        1,
-    )
-
-
-def _connect() -> psycopg.Connection:
-    connection = psycopg.connect(
-        _normalized_dsn(),
-        connect_timeout=POSTGRES_CONNECT_TIMEOUT,
-        row_factory=dict_row,
-    )
-
-    try:
-        register_vector(connection)
-    except Exception:
-        connection.close()
-        raise
-
-    return connection
-
-
-# 公开别名，供 structured 模块复用（避免复制 DSN 处理逻辑）
-connect = _connect
 
 
 def _documents_from_rows(
@@ -238,7 +198,7 @@ class PostgreSQLKnowledgeStore:
 
     def list_ids(self) -> set[str]:
         try:
-            with _connect() as connection:
+            with connect() as connection:
                 rows = connection.execute(
                     "SELECT id FROM public.school_knowledge_chunks"
                 ).fetchall()
@@ -249,7 +209,7 @@ class PostgreSQLKnowledgeStore:
 
     def list_documents(self) -> list[Document]:
         try:
-            with _connect() as connection:
+            with connect() as connection:
                 rows = connection.execute(
                     """
                     SELECT content, metadata
@@ -270,7 +230,7 @@ class PostgreSQLKnowledgeStore:
 
     def get_filter_catalog(self) -> FilterCatalog:
         try:
-            with _connect() as connection:
+            with connect() as connection:
                 row = connection.execute(
                     """
                     SELECT
@@ -387,7 +347,7 @@ class PostgreSQLKnowledgeStore:
         }
         desired_id_set = set(desired_ids)
 
-        with _connect() as connection:
+        with connect() as connection:
             connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 (REBUILD_LOCK_NAME,),
@@ -494,7 +454,7 @@ class PostgreSQLKnowledgeStore:
             "chunk",
         )
         try:
-            with _connect() as connection:
+            with connect() as connection:
                 rows = connection.execute(
                     sql.SQL(
                         """
@@ -536,7 +496,7 @@ class PostgreSQLKnowledgeStore:
             "candidate",
         )
         try:
-            with _connect() as connection:
+            with connect() as connection:
                 rows = connection.execute(
                     sql.SQL(
                         """

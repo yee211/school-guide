@@ -11,8 +11,8 @@ import {
   Sparkles,
   X,
 } from 'lucide-vue-next'
-import { askSchoolAssistant } from './services/chat'
-import type { ChatMessage } from './types/chat'
+import { askSchoolAssistantStream } from './services/chat'
+import type { ChatMessage, HistoryTurn } from './types/chat'
 
 const suggestions = [
   { icon: Building2, label: '学校概况', prompt: '请介绍一下长沙工业学院的基本情况' },
@@ -28,6 +28,9 @@ const mobileMenuOpen = ref(false)
 const messageList = ref<HTMLElement | null>(null)
 let id = 0
 
+// 每次请求携带的对话历史条数上限（约 5 轮），控制 token 用量
+const MAX_HISTORY = 10
+
 function scrollToBottom() {
   nextTick(() => messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }))
 }
@@ -36,26 +39,54 @@ async function sendMessage(text = input.value) {
   const question = text.trim()
   if (!question || loading.value) return
 
+  // 截取最近的对话历史（不含本条），供后端做多轮上下文
+  const history: HistoryTurn[] = messages.value
+    .slice(-MAX_HISTORY)
+    .map((m) => ({ role: m.role, content: m.content }))
+
   messages.value.push({ id: ++id, role: 'user', content: question })
   input.value = ''
   mobileMenuOpen.value = false
   loading.value = true
   scrollToBottom()
 
+  const assistantId = ++id
+  let started = false
+
   try {
-    const result = await askSchoolAssistant(question)
-    messages.value.push({
-      id: ++id,
-      role: 'assistant',
-      content: result.answer,
-      sources: result.sources,
+    await askSchoolAssistantStream(question, history, {
+      onDelta: (delta) => {
+        if (!started) {
+          // 第一个 delta 才创建气泡，避免和打字指示器重叠成两个
+          messages.value.push({ id: assistantId, role: 'assistant', content: delta })
+          started = true
+        } else {
+          const msg = messages.value.find((m) => m.id === assistantId)
+          if (msg) msg.content += delta
+        }
+        scrollToBottom()
+      },
+      onDone: (sources) => {
+        const msg = messages.value.find((m) => m.id === assistantId)
+        if (msg) msg.sources = sources
+      },
+      onError: (err) => {
+        const msg = messages.value.find((m) => m.id === assistantId)
+        if (msg) {
+          if (!msg.content) msg.content = err
+        } else {
+          messages.value.push({ id: assistantId, role: 'assistant', content: err })
+        }
+      },
     })
   } catch (error) {
-    messages.value.push({
-      id: ++id,
-      role: 'assistant',
-      content: error instanceof Error ? error.message : '抱歉，回答生成失败，请稍后重试。',
-    })
+    const fallback = error instanceof Error ? error.message : '抱歉，回答生成失败，请稍后重试。'
+    const msg = messages.value.find((m) => m.id === assistantId)
+    if (msg) {
+      if (!msg.content) msg.content = fallback
+    } else {
+      messages.value.push({ id: assistantId, role: 'assistant', content: fallback })
+    }
   } finally {
     loading.value = false
     scrollToBottom()

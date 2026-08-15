@@ -9,6 +9,11 @@ export interface ChatResponse {
   sources: ChatSource[]
 }
 
+export interface HistoryTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface ChatMessage {
   id: number
   role: 'user' | 'assistant'

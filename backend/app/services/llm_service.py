@@ -56,4 +56,28 @@ class LLMService:
 
         return content.strip()
 
+    async def stream(self, messages: list[BaseMessage]):
+        """流式生成回答，逐段 yield 文本内容。"""
+        try:
+            async for chunk in self._llm.astream(messages):
+                content = chunk.content
+                if isinstance(content, str) and content:
+                    yield content
+
+        except openai.AuthenticationError as exc:
+            logger.error("LLM authentication failed")
+            raise LLMAuthenticationError("模型服务鉴权失败") from exc
+
+        except openai.APITimeoutError as exc:
+            logger.warning("LLM request timed out")
+            raise LLMTimeoutError("模型响应超时") from exc
+
+        except openai.APIConnectionError as exc:
+            logger.warning("Unable to connect to LLM provider")
+            raise LLMConnectionError("无法连接模型服务") from exc
+
+        except openai.APIError as exc:
+            logger.exception("LLM provider returned an error")
+            raise LLMProviderError("模型服务调用失败") from exc
+
 llm_service = LLMService()

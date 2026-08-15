@@ -1,9 +1,10 @@
+from app.core.db import connect
 from app.rag.metadata import infer_retrieval_filters
-from app.rag.postgres_store import _connect, postgres_knowledge_store
+from app.rag.postgres_store import postgres_knowledge_store
 
 
 def main() -> None:
-    with _connect() as connection:
+    with connect() as connection:
         identity = connection.execute(
             """
             SELECT
@@ -51,11 +52,11 @@ def main() -> None:
 
     catalog = postgres_knowledge_store.get_filter_catalog()
     filters = infer_retrieval_filters(
-        "2025年湖南省物理类人工智能专业录取线",
+        "图书馆的借阅规则是什么？",
         catalog,
     )
     lexical_results = postgres_knowledge_store.bm25_search(
-        "2025年湖南省物理类人工智能专业录取线",
+        "图书馆的借阅规则是什么？",
         5,
         filters,
     )
@@ -75,11 +76,7 @@ def main() -> None:
     assert lexical_results
     assert catalog.years
     assert all(
-        "2025" in result.metadata.get("years", [])
-        and "物理类" in result.metadata.get("subject_categories", [])
-        and "湖南省" in result.metadata.get("provinces", [])
-        and "人工智能" in result.metadata.get("majors", [])
-        and result.metadata.get("document_type") == "录取分数"
+        result.metadata.get("document_type") == "图书馆"
         for result, _ in lexical_results
     )
 

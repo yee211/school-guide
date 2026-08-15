@@ -5,7 +5,7 @@ import logging
 from collections.abc import Sequence
 
 from app.core.redis_cache import redis_cache
-from app.rag.postgres_store import connect
+from app.core.db import connect
 
 logger = logging.getLogger(__name__)
 

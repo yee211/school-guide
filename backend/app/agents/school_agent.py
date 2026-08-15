@@ -1,6 +1,12 @@
 import asyncio
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, BaseMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 
 from app.prompts.school_prompt import SCHOOL_SYSTEM_PROMPT
 from app.services.llm_service import llm_service
@@ -14,18 +20,33 @@ class SchoolAgent:
     def __init__(self) -> None:
         self._llm_tools = llm_service.with_tools([query_admission_data])
 
-    async def chat(self, message: str) -> RAGResult:
-        messages: list[BaseMessage] = [
-            SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
-            HumanMessage(content=message),
-        ]
+    @staticmethod
+    def _history_to_messages(history) -> list[BaseMessage]:
+        """把前端传来的历史对话转成 LangChain 消息，让 agent 记住上下文。"""
+        messages: list[BaseMessage] = []
+        for item in history or ():
+            if item.role == "user":
+                messages.append(HumanMessage(content=item.content))
+            else:
+                messages.append(AIMessage(content=item.content))
+        return messages
 
-        response = await self._llm_tools.ainvoke(messages)
-
+    async def _prepare_generation(
+        self,
+        message: str,
+        history,
+        response,
+    ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
+        """准备最终生成的 messages 与来源；返回 None 表示无内容可答。"""
         if not response.tool_calls:
-            return await rag_service.answer(message)
+            return await rag_service.prepare(message, history)
 
-        messages.append(response)
+        base_messages: list[BaseMessage] = [
+            SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
+            *self._history_to_messages(history),
+            HumanMessage(content=message),
+            response,
+        ]
         sources: list[SourceInfo] = []
         seen_sources: set[str] = set()
 
@@ -37,10 +58,11 @@ class SchoolAgent:
                 structured_query_service.query_and_format,
                 question,
             )
-            # 结构化查询无有效结果时回退 RAG（避免误判意图后卡在空结果）
-            if not result.score_rows and not result.plan_rows:
-                return await rag_service.answer(message)
-            messages.append(
+            # 结构化查询无有效结果且无引导信息时回退 RAG（避免误判意图后卡在空结果）
+            if not result.score_rows and not result.plan_rows and not result.guidance:
+                return await rag_service.prepare(message, history)
+
+            base_messages.append(
                 ToolMessage(
                     content=result.format_context(),
                     tool_call_id=tool_call["id"],
@@ -57,8 +79,53 @@ class SchoolAgent:
                     )
                 )
 
-        final_answer = await llm_service.invoke(messages)
-        return RAGResult(answer=final_answer, sources=sources)
+        return base_messages, sources
+
+    async def stream(self, message: str, history=None):
+        """流式回答，逐段 yield ``{"type": "delta"|"done", ...}`` 事件。"""
+        messages: list[BaseMessage] = [
+            SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
+            *self._history_to_messages(history),
+            HumanMessage(content=message),
+        ]
+
+        response = await self._llm_tools.ainvoke(messages)
+
+        prepared = await self._prepare_generation(message, history, response)
+        if prepared is None:
+            yield {
+                "type": "delta",
+                "content": "根据目前的学校资料，我暂时无法回答这个问题。",
+            }
+            yield {"type": "done", "sources": []}
+            return
+
+        gen_messages, sources = prepared
+        async for token in llm_service.stream(gen_messages):
+            yield {"type": "delta", "content": token}
+
+        yield {
+            "type": "done",
+            "sources": [
+                {"title": source.title, "source": source.source}
+                for source in sources
+            ],
+        }
+
+    async def chat(self, message: str, history=None) -> RAGResult:
+        parts: list[str] = []
+        sources: list[SourceInfo] = []
+
+        async for event in self.stream(message, history):
+            if event["type"] == "delta":
+                parts.append(event["content"])
+            elif event["type"] == "done":
+                sources = [
+                    SourceInfo(title=s["title"], source=s["source"])
+                    for s in event["sources"]
+                ]
+
+        return RAGResult(answer="".join(parts), sources=sources)
 
 
 school_agent = SchoolAgent()

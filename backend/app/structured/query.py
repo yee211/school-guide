@@ -15,7 +15,7 @@ from app.rag.metadata import (
     RetrievalFilters,
     infer_retrieval_filters,
 )
-from app.rag.postgres_store import connect
+from app.core.db import connect
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,11 @@ class StructuredResult:
     plan_rows: list[dict] = field(default_factory=list)
     source_files: tuple[str, ...] = ()
     is_targeted: bool = False
+    guidance: str = ""
 
     def format_context(self) -> str:
+        if self.guidance:
+            return self.guidance
         if not self.score_rows and not self.plan_rows:
             return "未查询到符合条件的结构化数据。"
 
@@ -244,6 +247,14 @@ class StructuredQueryService:
     ) -> StructuredResult:
         is_targeted = bool(filters.years or filters.majors or filters.groups)
         if not is_targeted:
+            if filters.document_types:
+                types = "、".join(filters.document_types)
+                guidance = (
+                    f"用户的问题涉及{types}，但缺少具体的专业名、年份或专业组等"
+                    f"查询条件，无法精确定位。请引导用户补充具体条件，例如"
+                    f"「人工智能专业学费多少」「2025年计算机专业录取分数线」。"
+                )
+                return StructuredResult(is_targeted=False, guidance=guidance)
             return StructuredResult(is_targeted=False)
 
         cache_key = self._cache_key(filters, score_type)
@@ -331,6 +342,10 @@ def query_admission_data(question: str) -> str:
 
     当用户询问具体某年/某省份/某科类/某专业（或某专业组）的
     分数线、位次、录取分数、招生计划人数、学费时，调用此工具。
-    参数 question 是用户的问题原文。
+
+    question 必须是完整、自包含的查询语句：多轮对话中若用户先问了一个缺少
+    条件的模糊问题、随后又补充了省份/专业/年份等条件，要把这些条件与之前的
+    提问合并成完整问题再传入。例如用户先问「计算机投档线」、随后说「湖南」，
+    应传入「湖南省计算机专业投档线」，而不是「湖南」。
     """
     return structured_query_service.query_and_format(question).format_context()
