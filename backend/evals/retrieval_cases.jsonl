@@ -1,0 +1,6 @@
+{"id":"school_location","query":"长沙工业学院的新校区在哪里？","relevant_sources":["school_overview.md"],"must_contain":["旺旺西路366号"]}
+{"id":"school_history","query":"长沙工业学院以前叫什么名字，什么时候转设？","relevant_sources":["school_overview.md"],"must_contain":["湖南师范大学树达学院","2024年5月29日"]}
+{"id":"featured_major","query":"学校有哪些特色专业或重点建设专业？","relevant_sources":["school_overview.md"],"must_contain":["机械设计制造及其自动化","一流本科专业建设点"]}
+{"id":"dormitory","query":"宿舍是几人间，有没有独立卫浴和空调？","relevant_sources":["school_life.txt"],"must_contain":["四人间","独立卫浴","空调"]}
+{"id":"canteen","query":"学校食堂和周边吃饭方便吗？","relevant_sources":["school_life.txt"],"must_contain":["南区食堂","美食街"]}
+{"id":"campus_running","query":"校园跑每学期要求多少公里？","relevant_sources":["school_life.txt"],"must_contain":["60km"]}
