@@ -193,8 +193,7 @@ class RetrieverService:
             documents = []
         else:
             try:
-                documents = await asyncio.to_thread(
-                    qwen_reranker.rerank,
+                documents = await qwen_reranker.rerank(
                     retrieval_query,
                     candidates,
                     top_k,

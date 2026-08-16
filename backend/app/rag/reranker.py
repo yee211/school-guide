@@ -17,9 +17,13 @@ class QwenReranker:
     """调用千问（DashScope 百炼）云端 Rerank API 做重排序，无需本地模型。"""
 
     def __init__(self) -> None:
-        self._client = httpx.Client(timeout=30.0)
+        self._client = httpx.AsyncClient(timeout=30.0)
 
-    def rerank(
+    async def aclose(self) -> None:
+        """关闭底层连接池，供应用关闭时调用。"""
+        await self._client.aclose()
+
+    async def rerank(
         self,
         query: str,
         documents: list[Document],
@@ -32,7 +36,7 @@ class QwenReranker:
             raise RuntimeError("未配置 RERANKER_BASE_URL，无法调用 Rerank API")
 
         url = f"{RERANKER_BASE_URL.rstrip('/')}/reranks"
-        response = self._client.post(
+        response = await self._client.post(
             url,
             headers={
                 "Authorization": f"Bearer {RERANKER_API_KEY}",
