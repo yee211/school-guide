@@ -18,7 +18,7 @@ class SchoolAgent:
     """路由 agent：LLM 意图识别，结构化问题走数据库 tool，否则走 RAG。"""
 
     def __init__(self) -> None:
-        self._llm_tools = llm_service.with_tools([query_admission_data])
+        self._llm_tools = llm_service.intent_with_tools([query_admission_data])
 
     @staticmethod
     def _history_to_messages(history) -> list[BaseMessage]:

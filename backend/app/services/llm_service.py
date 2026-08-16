@@ -3,7 +3,12 @@ import openai
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from app.core.config import LLM_API_KEY, LLM_MODEL_ID, LLM_BASE_URL
+from app.core.config import (
+    INTENT_LLM_MODEL_ID,
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MODEL_ID,
+)
 from app.core.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
@@ -23,10 +28,21 @@ class LLMService:
         timeout=30.0,
         max_retries=1
       )
+      self._intent_llm = ChatOpenAI(
+        api_key=LLM_API_KEY,
+        base_url=LLM_BASE_URL,
+        model=INTENT_LLM_MODEL_ID,
+        timeout=30.0,
+        max_retries=1
+      )
 
     def with_tools(self, tools: list) -> "ChatOpenAI":
       """返回绑定工具（function calling）的 LLM，供 agent 做意图识别。"""
       return self._llm.bind_tools(tools)
+
+    def intent_with_tools(self, tools: list) -> "ChatOpenAI":
+      """意图识别专用（可用更快的模型档位），返回绑定工具的 LLM。"""
+      return self._intent_llm.bind_tools(tools)
 
     async def invoke(self, messages: list[BaseMessage]) -> str:
         try:

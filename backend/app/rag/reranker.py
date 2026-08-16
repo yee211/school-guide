@@ -1,71 +1,23 @@
-from functools import lru_cache
-from threading import Lock
+import logging
 
-import torch
+import httpx
 from langchain_core.documents import Document
-from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
-)
 
 from app.core.config import (
-    RERANK_BATCH_SIZE,
-    RERANK_MAX_LENGTH,
-    RERANK_MODEL_ID,
+    RERANKER_API_KEY,
+    RERANKER_BASE_URL,
+    RERANKER_MODEL_ID,
 )
 
 
-class CrossEncoderReranker:
+logger = logging.getLogger(__name__)
+
+
+class QwenReranker:
+    """调用千问（DashScope 百炼）云端 Rerank API 做重排序，无需本地模型。"""
+
     def __init__(self) -> None:
-        self._lock = Lock()
-
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _load_model():
-        tokenizer = AutoTokenizer.from_pretrained(
-            RERANK_MODEL_ID,
-        )
-        model = AutoModelForSequenceClassification.from_pretrained(
-            RERANK_MODEL_ID,
-        )
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else "cpu"
-        )
-        model.to(device)
-        model.eval()
-        return tokenizer, model, device
-
-    def _score(
-        self,
-        query: str,
-        documents: list[Document],
-    ) -> list[float]:
-        tokenizer, model, device = self._load_model()
-        scores: list[float] = []
-
-        for start in range(0, len(documents), RERANK_BATCH_SIZE):
-            batch = documents[start:start + RERANK_BATCH_SIZE]
-            inputs = tokenizer(
-                [query] * len(batch),
-                [document.page_content for document in batch],
-                padding=True,
-                truncation=True,
-                max_length=RERANK_MAX_LENGTH,
-                return_tensors="pt",
-            )
-            inputs = {
-                key: value.to(device)
-                for key, value in inputs.items()
-            }
-
-            with torch.inference_mode():
-                logits = model(**inputs).logits
-
-            scores.extend(
-                logits.reshape(-1).float().cpu().tolist()
-            )
-
-        return scores
+        self._client = httpx.Client(timeout=30.0)
 
     def rerank(
         self,
@@ -76,15 +28,42 @@ class CrossEncoderReranker:
         if not documents or top_k <= 0:
             return []
 
-        with self._lock:
-            scores = self._score(query, documents)
+        if not RERANKER_BASE_URL:
+            raise RuntimeError("未配置 RERANKER_BASE_URL，无法调用 Rerank API")
 
-        ranked = sorted(
-            zip(documents, scores),
-            key=lambda item: item[1],
+        url = f"{RERANKER_BASE_URL.rstrip('/')}/reranks"
+        response = self._client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {RERANKER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": RERANKER_MODEL_ID,
+                "query": query,
+                "documents": [
+                    document.page_content for document in documents
+                ],
+                "top_n": min(top_k, len(documents)),
+            },
+        )
+        response.raise_for_status()
+        results = response.json().get("results", [])
+
+        ordered = sorted(
+            results,
+            key=lambda item: item.get("relevance_score", 0.0),
             reverse=True,
         )
-        return [document for document, _ in ranked[:top_k]]
+
+        ranked: list[Document] = []
+        for item in ordered:
+            index = item.get("index")
+            if isinstance(index, int) and 0 <= index < len(documents):
+                ranked.append(documents[index])
+            if len(ranked) >= top_k:
+                break
+        return ranked
 
 
-cross_encoder_reranker = CrossEncoderReranker()
+qwen_reranker = QwenReranker()

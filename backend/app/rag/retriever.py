@@ -6,7 +6,11 @@ from time import perf_counter
 import openai
 from langchain_core.documents import Document
 
-from app.core.config import HYBRID_CANDIDATE_COUNT
+from app.core.config import (
+    BM25_RECALL_K,
+    HYBRID_CANDIDATE_COUNT,
+    SEMANTIC_RECALL_K,
+)
 from app.core.exceptions import (
     LLMAuthenticationError,
     LLMConnectionError,
@@ -16,7 +20,7 @@ from app.core.exceptions import (
 from app.rag.indexer import build_chunk_id, get_embedding_model
 from app.rag.metadata import RetrievalFilters, infer_retrieval_filters
 from app.rag.postgres_store import postgres_knowledge_store
-from app.rag.reranker import cross_encoder_reranker
+from app.rag.reranker import qwen_reranker
 
 
 logger = logging.getLogger(__name__)
@@ -129,7 +133,15 @@ class RetrieverService:
                 timings_ms={"total": 0.0},
             )
 
-        retrieval_limit = max(
+        semantic_recall = max(
+            candidate_count or SEMANTIC_RECALL_K,
+            top_k,
+        )
+        lexical_recall = max(
+            candidate_count or BM25_RECALL_K,
+            top_k,
+        )
+        fusion_limit = max(
             candidate_count or HYBRID_CANDIDATE_COUNT,
             top_k,
         )
@@ -144,7 +156,7 @@ class RetrieverService:
             started = perf_counter()
             results = await self._semantic_search(
                 retrieval_query,
-                retrieval_limit,
+                semantic_recall,
                 score_threshold,
                 filters,
             )
@@ -155,7 +167,7 @@ class RetrieverService:
             results = await asyncio.to_thread(
                 postgres_knowledge_store.bm25_search,
                 retrieval_query,
-                retrieval_limit,
+                lexical_recall,
                 filters,
             )
             return results, (perf_counter() - started) * 1000
@@ -171,7 +183,7 @@ class RetrieverService:
         candidates = self._fuse_results(
             semantic_results,
             lexical_results,
-            retrieval_limit,
+            fusion_limit,
         )
         fusion_ms = (perf_counter() - fusion_started) * 1000
 
@@ -182,7 +194,7 @@ class RetrieverService:
         else:
             try:
                 documents = await asyncio.to_thread(
-                    cross_encoder_reranker.rerank,
+                    qwen_reranker.rerank,
                     retrieval_query,
                     candidates,
                     top_k,
@@ -190,7 +202,7 @@ class RetrieverService:
             except Exception:
                 rerank_fallback = True
                 logger.exception(
-                    "Cross-encoder reranking failed; using fused ranking"
+                    "Reranking failed; using fused ranking"
                 )
                 documents = candidates[:top_k]
 
