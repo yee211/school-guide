@@ -7,6 +7,7 @@ from app.core.config import (
     INTENT_LLM_MODEL_ID,
     LLM_API_KEY,
     LLM_BASE_URL,
+    LLM_ENABLE_THINKING,
     LLM_MODEL_ID,
 )
 from app.core.exceptions import (
@@ -21,20 +22,18 @@ logger = logging.getLogger(__name__)
 
 class LLMService:
     def __init__(self) -> None:
-      self._llm = ChatOpenAI(
-        api_key=LLM_API_KEY,
-        base_url=LLM_BASE_URL,
-        model=LLM_MODEL_ID,
-        timeout=30.0,
-        max_retries=1
-      )
-      self._intent_llm = ChatOpenAI(
-        api_key=LLM_API_KEY,
-        base_url=LLM_BASE_URL,
-        model=INTENT_LLM_MODEL_ID,
-        timeout=30.0,
-        max_retries=1
-      )
+      common_kwargs = {
+        "api_key": LLM_API_KEY,
+        "base_url": LLM_BASE_URL,
+        "timeout": 30.0,
+        "max_retries": 1,
+      }
+      if not LLM_ENABLE_THINKING:
+        # DeepSeek V4 思考模式下工具调用需回传 reasoning_content，LangChain 不会回传，
+        # 多轮会触发 400；此处显式关闭思考模式（不影响 function calling）。
+        common_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+      self._llm = ChatOpenAI(model=LLM_MODEL_ID, **common_kwargs)
+      self._intent_llm = ChatOpenAI(model=INTENT_LLM_MODEL_ID, **common_kwargs)
 
     def with_tools(self, tools: list) -> "ChatOpenAI":
       """返回绑定工具（function calling）的 LLM，供 agent 做意图识别。"""

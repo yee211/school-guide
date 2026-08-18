@@ -1,0 +1,56 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: school_db
+    restart: always
+    environment:
+      POSTGRES_USER: school
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: school
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 首次初始化时自动创建 pgvector 扩展
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U school -d school"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: school_redis
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: school_backend
+    restart: always
+    env_file: .env
+    environment:
+      # 容器内网络：通过服务名访问数据库和 Redis
+      POSTGRES_DSN: postgresql://school:${POSTGRES_PASSWORD}@db:5432/school
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      # 上传的知识库原始文件持久化（backend/data/raw）
+      - ../backend/data:/app/backend/data
+      # docling / huggingface 模型缓存持久化，避免重建镜像后重新下载
+      - modelcache:/root/.cache
+    ports:
+      # 仅绑定本机回环地址，由 Nginx 反向代理对外，不直接暴露后端
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  modelcache:

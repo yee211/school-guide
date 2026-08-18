@@ -6,3 +6,5 @@ backend/data/vector_store/
 frontend/dist/
 frontend/node_modules/
 *.tsbuildinfo
+# 本地备份包不入库（可能包含 .env 等敏感文件）
+*.zip

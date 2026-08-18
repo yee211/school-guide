@@ -10,6 +10,15 @@ LLM_MODEL_ID = os.getenv("LLM_MODEL_ID")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL")
 # 意图识别专用模型（路由用，可用更快档位；默认与生成模型相同）
 INTENT_LLM_MODEL_ID = os.getenv("INTENT_LLM_MODEL_ID") or LLM_MODEL_ID
+# DeepSeek V4 系列默认开启思考模式：思考模式下发生工具调用后，后续多轮必须回传
+# reasoning_content，而 LangChain 会丢弃该字段从而触发 400。本项目以检索+组织回答
+# 为主，默认关闭思考模式；如需开启请设置 LLM_ENABLE_THINKING=true。
+LLM_ENABLE_THINKING = os.getenv("LLM_ENABLE_THINKING", "false").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 #embedding
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY")

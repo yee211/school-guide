@@ -40,6 +40,41 @@ KNOWN_MAJORS = (
     "金融学",
 )
 
+# 口语缩写/常用简称 → 规范专业全名（与库中 major 字段一致）。
+# 一个缩写可对应多个专业（如「电子信息」），由 SQL 的 ANY 匹配兜底后交由 LLM 呈现。
+MAJOR_ALIASES: dict[str, tuple[str, ...]] = {
+    "机械设计制造": ("机械设计制造及其自动化",),
+    "机械设计": ("机械设计制造及其自动化",),
+    "机械制造": ("机械设计制造及其自动化",),
+    "数据科学": ("数据科学与大数据技术",),
+    "大数据技术": ("数据科学与大数据技术",),
+    "大数据管理": ("大数据管理与应用",),
+    "大数据": ("数据科学与大数据技术", "大数据管理与应用"),
+    "电子信息": ("电子信息工程", "电子信息科学与技术"),
+    "计算机": ("计算机科学与技术",),
+    "计科": ("计算机科学与技术",),
+    "软件": ("软件工程",),
+    "视觉传达": ("视觉传达设计",),
+    "视传": ("视觉传达设计",),
+    "数字媒体": ("数字媒体技术",),
+    "数媒": ("数字媒体技术",),
+    "智能科学": ("智能科学与技术",),
+    "智能制造": ("智能制造工程",),
+    "机器人": ("机器人工程",),
+    "新能源汽车": ("新能源汽车工程",),
+    "新能源": ("新能源汽车工程",),
+    "虚拟现实": ("虚拟现实技术",),
+    "人文地理": ("人文地理与城乡规划",),
+    "城乡规划": ("人文地理与城乡规划",),
+    "数学": ("数学与应用数学（师范类）",),
+    "应用数学": ("数学与应用数学（师范类）",),
+    "艺术设计": ("艺术设计学",),
+    "会计": ("会计学",),
+    "金融": ("金融学",),
+    "电商": ("电子商务",),
+    "网工": ("网络工程",),
+}
+
 PROVINCE_ALIASES = {
     "北京": "北京市",
     "天津": "天津市",
@@ -169,13 +204,35 @@ def _canonical_major(major: str) -> str:
     return major.replace("(师范类)", "（师范类）")
 
 
+def _alias_matched_majors(text: str, full_name_hits: list[str]) -> list[str]:
+    """把口语缩写（视传/计科/大数据等）映射为规范专业全名。
+
+    长缩写优先：若短缩写是某个已命中的更长缩写或专业全名的子串则跳过，
+    避免「电子信息工程分数线」误带出「电子信息科学与技术」。
+    """
+    lowered = text.lower()
+    matched_aliases = [
+        alias
+        for alias in sorted(MAJOR_ALIASES, key=len, reverse=True)
+        if alias in text or alias.lower() in lowered
+    ]
+    majors: list[str] = []
+    for alias in matched_aliases:
+        if any(
+            alias != other and alias in other
+            for other in (*matched_aliases, *full_name_hits)
+        ):
+            continue
+        majors.extend(MAJOR_ALIASES[alias])
+    return majors
+
+
 def _extract_majors(text: str) -> list[str]:
+    full_name_hits = [
+        _canonical_major(major) for major in KNOWN_MAJORS if major in text
+    ]
     return _ordered_unique(
-        [
-            _canonical_major(major)
-            for major in KNOWN_MAJORS
-            if major in text
-        ]
+        [*full_name_hits, *_alias_matched_majors(text, full_name_hits)]
     )
 
 

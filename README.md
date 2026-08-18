@@ -1,11 +1,11 @@
-# 校园智答（School Introduction Assistant）
+# 谭锃个人主页 · 校园智答（School Introduction Assistant）
 
-长沙工业学院校园智能问答助手：针对学校的招生录取、专业设置、学费、校园生活等问题，提供基于知识库的智能问答。
+个人开发者作品集网站，内嵌「校园智答」作为首个可交互项目。校园智答针对长沙工业学院的招生录取、专业设置、学费、校园生活等问题，提供基于知识库的智能问答。
 
 ## 技术栈
 
 - **后端**：FastAPI + LangChain + PostgreSQL（pgvector）
-- **前端**：Vue 3 + TypeScript + Vite
+- **前端**：Vue 3 + TypeScript + Vite（个人主页 + 项目在线体验）
 - **检索**：混合检索（向量检索 + BM25 词法检索 + bge-reranker 重排）
 - **结构化数据**：录取分数线 / 招生计划抽取进 PostgreSQL 表，SQL 精确查询
 - **缓存**：Redis（Cache-Aside + 版本号失效）
