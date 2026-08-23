@@ -151,11 +151,9 @@ class StructuredQueryService:
             return "最高分"
         if "控制线" in question:
             return "控制线"
-        if any(
-            key in question
-            for key in ("最低", "投档", "录取线", "分数线", "录取分", "分数")
-        ):
+        if "最低" in question:
             return "最低分"
+        # 不强制过滤 score_type，允许同时查询最低分、最高分、控制线
         return None
 
     @staticmethod
@@ -216,6 +214,7 @@ class StructuredQueryService:
                     FROM public.school_admission_scores AS s
                     WHERE TRUE {where}
                     ORDER BY year DESC, score DESC, major NULLS LAST
+                    LIMIT 50
                     """
                 ).format(where=where),
                 params,
@@ -234,6 +233,7 @@ class StructuredQueryService:
                     FROM public.school_admission_plans AS p
                     WHERE TRUE {where}
                     ORDER BY year DESC, plan DESC, major NULLS LAST
+                    LIMIT 50
                     """
                 ).format(where=where),
                 params,
@@ -245,17 +245,17 @@ class StructuredQueryService:
         filters: RetrievalFilters,
         score_type: str | None = None,
     ) -> StructuredResult:
-        is_targeted = bool(filters.years or filters.majors or filters.groups)
+        is_targeted = bool(
+            filters.years
+            or filters.majors
+            or filters.groups
+            or filters.provinces
+            or filters.subject_categories
+        )
         if not is_targeted:
-            if filters.document_types:
-                types = "、".join(filters.document_types)
-                guidance = (
-                    f"用户的问题涉及{types}，但缺少具体的专业名、年份或专业组等"
-                    f"查询条件，无法精确定位。请引导用户补充具体条件，例如"
-                    f"「人工智能专业学费多少」「2025年计算机专业录取分数线」。"
-                )
-                return StructuredResult(is_targeted=False, guidance=guidance)
+            # 条件过于宽泛时直接转 RAG 检索，避免返回生硬的拒绝引导句
             return StructuredResult(is_targeted=False)
+
 
         cache_key = self._cache_key(filters, score_type)
         cached = redis_cache.get_json(cache_key)

@@ -1,9 +1,10 @@
-"""PostgreSQL 连接封装（基础设施，供 rag / structured 复用）。"""
-from __future__ import annotations
+from contextlib import contextmanager
+from typing import Iterator
 
 import psycopg
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app.core.config import POSTGRES_CONNECT_TIMEOUT, POSTGRES_DSN
 
@@ -26,17 +27,31 @@ def _normalized_dsn() -> str:
     )
 
 
-def connect() -> psycopg.Connection:
-    connection = psycopg.connect(
-        _normalized_dsn(),
-        connect_timeout=POSTGRES_CONNECT_TIMEOUT,
-        row_factory=dict_row,
-    )
+def _configure_connection(connection: psycopg.Connection) -> None:
+    connection.row_factory = dict_row
+    register_vector(connection)
 
-    try:
-        register_vector(connection)
-    except Exception:
-        connection.close()
-        raise
 
-    return connection
+_pool: ConnectionPool | None = None
+
+
+def get_pool() -> ConnectionPool:
+    global _pool
+    if _pool is None:
+        _pool = ConnectionPool(
+            _normalized_dsn(),
+            min_size=1,
+            max_size=20,
+            timeout=float(POSTGRES_CONNECT_TIMEOUT),
+            configure=_configure_connection,
+        )
+    return _pool
+
+
+@contextmanager
+def connect() -> Iterator[psycopg.Connection]:
+    """获取连接池中的可用连接，离开上下文时自动归还池中。"""
+    pool = get_pool()
+    with pool.connection() as connection:
+        yield connection
+

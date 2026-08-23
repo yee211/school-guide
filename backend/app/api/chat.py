@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, status
@@ -14,7 +15,10 @@ from app.core.exceptions import (
     LLMTimeoutError,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/chat", tags=["chat"])
+
 
 
 class HistoryMessage(BaseModel):
@@ -119,6 +123,9 @@ async def chat_stream(request: ChatRequest):
             yield _sse_error("模型没有返回有效内容，请重新提问")
         except LLMProviderError:
             yield _sse_error("模型服务暂时异常，请稍后重试")
+        except Exception:
+            logger.exception("Unexpected error in SSE chat_stream")
+            yield _sse_error("服务遇到暂时异常，请稍后重试")
 
     return StreamingResponse(
         event_stream(),
@@ -128,3 +135,4 @@ async def chat_stream(request: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+

@@ -29,16 +29,19 @@ export async function askSchoolAssistantStream(
   message: string,
   history: HistoryTurn[],
   callbacks: StreamCallbacks,
+  signal?: AbortSignal,
 ): Promise<void> {
   const response = await fetch('/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history }),
+    signal,
   })
 
   if (!response.ok || !response.body) {
     throw new Error('服务暂时不可用，请稍后重试')
   }
+
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()

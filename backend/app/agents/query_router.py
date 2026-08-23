@@ -49,7 +49,11 @@ class QueryRouter:
         """
         catalog = await asyncio.to_thread(structured_query_service.get_catalog)
         filters = infer_retrieval_filters(message, catalog)
-        targeted = bool(filters.majors or filters.groups)
+        targeted = bool(
+            filters.majors
+            or filters.groups
+            or (filters.provinces and filters.years)
+        )
         is_score_or_plan = bool(
             set(filters.document_types) & {"录取分数", "招生计划"}
         )
@@ -158,13 +162,35 @@ class QueryRouter:
         history=None,
     ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
         """路由并组装生成所需的消息与来源；返回 None 表示无内容可答。"""
+        # 1. 优先检查当前提问是否直接命中规则快通道
         if await self._fast_structured_question(message) is not None:
             return await self._fast_structured_messages(message, history)
+
+        # 2. 如果存在对话历史，尝试结合历史上下文改写后再检查快通道
+        if history:
+            rewritten_query = await rag_service.contextualize_query(message, history)
+            if (
+                rewritten_query != message
+                and await self._fast_structured_question(rewritten_query) is not None
+            ):
+                return await self._fast_structured_messages(rewritten_query, history)
 
         messages: list[BaseMessage] = [
             SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
             *self._history_to_messages(history),
             HumanMessage(content=message),
         ]
-        response = await self._llm_tools.ainvoke(messages)
-        return await self._prepare_generation(message, history, response)
+        try:
+            response = await asyncio.wait_for(
+                self._llm_tools.ainvoke(messages),
+                timeout=6.0,
+            )
+            return await self._prepare_generation(message, history, response)
+        except Exception as exc:
+            logger.warning(
+                "Intent LLM invocation failed or timed out (%s), falling back to RAG",
+                exc,
+            )
+            return await rag_service.prepare(message, history)
+
+

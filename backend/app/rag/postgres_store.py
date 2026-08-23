@@ -13,6 +13,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from app.core.db import connect, PostgreSQLConfigurationError
+from app.core.redis_cache import redis_cache
 from app.rag.metadata import FilterCatalog, RetrievalFilters
 
 
@@ -32,7 +33,31 @@ class IndexSyncStats:
     removed: int
 
 
+def inject_jieba_vocabulary(catalog: FilterCatalog | None = None) -> None:
+    """向 jieba 注入学校专业、组号、简称等专有名词，防止 BM25 分词被切碎。"""
+    core_words = (
+        "长沙工业学院", "长工", "树达学院", "树达", "普通类", "物理类", "历史类",
+        "艺术类", "单招", "专升本", "师范类", "公费师范生", "最低投档分", "最低分",
+        "最高分", "控制线", "投档线", "录取分", "位次", "招生计划", "学费", "学制",
+        "产教融合", "田径场", "图书馆", "宿舍", "空调"
+    )
+    for w in core_words:
+        jieba.add_word(w, freq=10000)
+
+    if catalog:
+        for major in catalog.majors:
+            if major:
+                jieba.add_word(major, freq=10000)
+        for group in catalog.groups:
+            if group:
+                jieba.add_word(group, freq=10000)
+        for prov in catalog.provinces:
+            if prov:
+                jieba.add_word(prov, freq=10000)
+
+
 def tokenize_for_search(text: str) -> list[str]:
+
     return [
         token
         for raw_token in jieba.cut_for_search(text.lower())
@@ -229,6 +254,36 @@ class PostgreSQLKnowledgeStore:
         ]
 
     def get_filter_catalog(self) -> FilterCatalog:
+        version = redis_cache.get_version()
+        cache_key = f"rag:filter_catalog:{version}"
+        cached = redis_cache.get_json(cache_key)
+        if cached is not None:
+            catalog = FilterCatalog(
+                years=tuple(cached.get("years", ())),
+                subject_categories=tuple(cached.get("subject_categories", ())),
+                provinces=tuple(cached.get("provinces", ())),
+                majors=tuple(cached.get("majors", ())),
+                document_types=tuple(cached.get("document_types", ())),
+            )
+            inject_jieba_vocabulary(catalog)
+            return catalog
+
+        catalog = self._load_filter_catalog()
+        inject_jieba_vocabulary(catalog)
+        redis_cache.set_json(
+            cache_key,
+            {
+                "years": list(catalog.years),
+                "subject_categories": list(catalog.subject_categories),
+                "provinces": list(catalog.provinces),
+                "majors": list(catalog.majors),
+                "document_types": list(catalog.document_types),
+            },
+        )
+        return catalog
+
+
+    def _load_filter_catalog(self) -> FilterCatalog:
         try:
             with connect() as connection:
                 row = connection.execute(
@@ -294,6 +349,7 @@ class PostgreSQLKnowledgeStore:
             majors=tuple(row["majors"] or ()),
             document_types=tuple(row["document_types"] or ()),
         )
+
 
     def sync_documents(
         self,
@@ -434,11 +490,13 @@ class PostgreSQLKnowledgeStore:
                     exc_info=True,
                 )
 
+        redis_cache.bump_version()
         return IndexSyncStats(
             total=len(desired_id_set),
             added=len(ids_to_insert),
             removed=len(obsolete_ids),
         )
+
 
     def semantic_search(
         self,

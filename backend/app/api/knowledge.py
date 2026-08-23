@@ -1,16 +1,20 @@
 import asyncio
+import logging
 from pathlib import Path
+
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
 from app.rag.indexer import rebuild_index
 from app.rag.loader import RAW_DATA_DIR, load_knowledge_documents
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
-
 from app.rag.splitter import split_documents
 from app.rag.upload_loader import (
     SUPPORTED_EXTENSIONS,
     load_uploaded_documents,
 )
+from app.structured.parsers import parse_all
+from app.structured.store import reload as reload_structured_data
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/knowledge",
@@ -71,14 +75,6 @@ async def upload_document(
 
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    target_path = RAW_DATA_DIR / filename
-
-    if target_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="知识库中已经存在同名文件",
-        )
-
     uploaded_chunks = split_documents(documents)
 
     async with UPLOAD_LOCK:
@@ -102,6 +98,24 @@ async def upload_document(
                 rebuild_index,
                 all_chunks,
             )
+
+            # 同步更新结构化招生与录取数据表（如有结构化文件）
+            try:
+                score_rows, plan_rows = await asyncio.to_thread(
+                    parse_all,
+                    RAW_DATA_DIR,
+                )
+                if score_rows or plan_rows:
+                    await asyncio.to_thread(
+                        reload_structured_data,
+                        score_rows,
+                        plan_rows,
+                    )
+            except Exception:
+                logger.warning(
+                    "结构化数据表同步跳过或失败，不影响向量知识库",
+                    exc_info=True,
+                )
         except Exception as exc:
             # 建库失败，移除刚保存的文件
             target_path.unlink(missing_ok=True)

@@ -22,7 +22,6 @@ def load_knowledge_documents() -> list[Document]:
         if (
             file_path.is_file()
             and file_path.suffix.lower() in SUPPORTED_EXTENSIONS
-            and file_path.name not in STRUCTURED_FILENAMES
         )
     )
 

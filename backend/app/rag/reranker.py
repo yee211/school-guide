@@ -36,8 +36,17 @@ class QwenReranker:
             raise RuntimeError("未配置 RERANKER_BASE_URL，无法调用 Rerank API")
 
         url = f"{RERANKER_BASE_URL.rstrip('/')}/reranks"
+        doc_texts: list[str] = []
+        for document in documents:
+            title = str(document.metadata.get("title") or "").strip()
+            if title and not document.page_content.startswith(f"# {title}"):
+                doc_texts.append(f"【{title}】\n{document.page_content}")
+            else:
+                doc_texts.append(document.page_content)
+
         response = await self._client.post(
             url,
+
             headers={
                 "Authorization": f"Bearer {RERANKER_API_KEY}",
                 "Content-Type": "application/json",
@@ -45,12 +54,11 @@ class QwenReranker:
             json={
                 "model": RERANKER_MODEL_ID,
                 "query": query,
-                "documents": [
-                    document.page_content for document in documents
-                ],
+                "documents": doc_texts,
                 "top_n": min(top_k, len(documents)),
             },
         )
+
         response.raise_for_status()
         results = response.json().get("results", [])
 

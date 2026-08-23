@@ -452,6 +452,7 @@ def _parse_summary_2026_score(
     for row in filled:
         subject = normalize_subject(strip_markdown_bold(row[0]))
         group_no = normalize_group(strip_markdown_bold(row[1]), subject)
+        major = normalize_major(strip_markdown_bold(row[2])) if len(row) > 2 else None
         if not subject or not group_no:
             continue
 
@@ -464,7 +465,7 @@ def _parse_summary_2026_score(
                     subject_category=subject,
                     plan=plan,
                     group_no=group_no,
-                    major=None,
+                    major=major,
                     source_file=source_file,
                 )
             )
@@ -480,7 +481,7 @@ def _parse_summary_2026_score(
                     score=max_score,
                     admission_rank=max_rank,
                     group_no=group_no,
-                    major=None,
+                    major=major,
                     source_file=source_file,
                 )
             )
@@ -496,12 +497,13 @@ def _parse_summary_2026_score(
                     score=min_score,
                     admission_rank=min_rank,
                     group_no=group_no,
-                    major=None,
+                    major=major,
                     source_file=source_file,
                 )
             )
 
     return score_rows, plan_rows
+
 
 
 def parse_summary(text: str, source_file: str) -> tuple[list[dict], list[dict]]:

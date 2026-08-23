@@ -158,7 +158,7 @@ class RetrieverService:
                 retrieval_query,
                 semantic_recall,
                 score_threshold,
-                filters,
+                filters=None,
             )
             return results, (perf_counter() - started) * 1000
 
@@ -168,7 +168,7 @@ class RetrieverService:
                 postgres_knowledge_store.bm25_search,
                 retrieval_query,
                 lexical_recall,
-                filters,
+                filters=None,
             )
             return results, (perf_counter() - started) * 1000
 

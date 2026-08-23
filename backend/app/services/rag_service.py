@@ -68,14 +68,49 @@ class RAGService:
                 messages.append(AIMessage(content=item.content))
         return messages
 
+    @staticmethod
+    async def contextualize_query(question: str, history=None) -> str:
+        """如果存在多轮历史，将指代/省略句改写为自包含检索 Query。"""
+        if not history:
+            return question.strip()
+
+        recent = history[-4:] if len(history) > 4 else history
+        conv_text = "\n".join(
+            f"{item.role}: {item.content}" for item in recent
+        )
+        prompt = [
+            SystemMessage(
+                content=(
+                    "你是一个搜索查询改写助手。根据对话历史，将用户最新的简短提问改写为一个自包含、语义完整的搜索语句，用于在长沙工业学院知识库中检索。\n"
+                    "规则：\n"
+                    "1. 补全省略的主语（如专业名称、设施、部门或场景）；\n"
+                    "2. 消除代词指代（如'这个专业'、'那学费呢'、'有空调吗'）；\n"
+                    "3. 保持简练，直接输出改写后的检索语句，不要输出任何问候或解释；\n"
+                    "4. 若当前提问本身已自包含，直接输出原句。"
+                )
+            ),
+            HumanMessage(
+                content=f"对话历史：\n{conv_text}\n\n最新提问：{question}\n\n改写后的检索语句："
+            ),
+        ]
+        try:
+            rewritten = await llm_service.invoke(prompt)
+            cleaned = rewritten.strip().strip('"').strip("'")
+            if cleaned and len(cleaned) <= 100:
+                return cleaned
+        except Exception:
+            pass
+        return question.strip()
+
     async def prepare(
         self,
         question: str,
         history=None,
     ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
         """检索并组装生成所需的消息与来源；无相关片段时返回 None。"""
+        search_query = await self.contextualize_query(question, history)
         documents = await retriever_service.search(
-            query=question,
+            query=search_query,
             top_k=5,
         )
 
@@ -96,6 +131,7 @@ class RAGService:
         ]
 
         return messages, self._build_sources(documents)
+
 
     async def answer(self, question: str, history=None) -> RAGResult:
         prepared = await self.prepare(question, history)

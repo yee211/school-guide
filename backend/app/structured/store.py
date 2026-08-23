@@ -146,20 +146,47 @@ def _plan_tuple(row: dict) -> tuple:
     return tuple(row.get(col) for col in _PLAN_COLUMNS)
 
 
+def _score_key(row: dict) -> tuple:
+    return (
+        row.get("year"),
+        row.get("province"),
+        row.get("subject_category"),
+        row.get("group_no") or "",
+        row.get("major") or "",
+        row.get("score_type"),
+        row.get("batch") or "",
+        row.get("source_file"),
+    )
+
+
+def _plan_key(row: dict) -> tuple:
+    return (
+        row.get("year"),
+        row.get("province"),
+        row.get("subject_category"),
+        row.get("group_no") or "",
+        row.get("major") or "",
+        row.get("source_file"),
+    )
+
+
 def reload(
     score_rows: Sequence[dict],
     plan_rows: Sequence[dict],
 ) -> tuple[int, int]:
-    """全量重建两张表（单事务 DELETE + INSERT，幂等）。"""
-    # 防御：跳过科类为空的脏行
-    score_rows = [
-        row for row in score_rows
-        if row.get("subject_category") and row.get("score") is not None
-    ]
-    plan_rows = [
-        row for row in plan_rows
-        if row.get("subject_category") and row.get("plan") is not None
-    ]
+    """全量重建两张表（单事务 DELETE + INSERT，幂等且自动去重）。"""
+    # 防御：跳过科类为空的脏行并按自然主键去重，避免 Markdown 格式重复行触发唯一键冲突
+    unique_scores: dict[tuple, dict] = {}
+    for row in score_rows:
+        if row.get("subject_category") and row.get("score") is not None:
+            unique_scores[_score_key(row)] = row
+    dedup_scores = list(unique_scores.values())
+
+    unique_plans: dict[tuple, dict] = {}
+    for row in plan_rows:
+        if row.get("subject_category") and row.get("plan") is not None:
+            unique_plans[_plan_key(row)] = row
+    dedup_plans = list(unique_plans.values())
 
     with connect() as connection:
         _ensure_schema(connection)
@@ -167,25 +194,28 @@ def reload(
         connection.execute("DELETE FROM public.school_admission_scores")
         connection.execute("DELETE FROM public.school_admission_plans")
 
-        if score_rows:
+        if dedup_scores:
             with connection.cursor() as cursor:
                 cursor.executemany(
                     _SCORE_INSERT,
-                    [_score_tuple(row) for row in score_rows],
+                    [_score_tuple(row) for row in dedup_scores],
                 )
-        if plan_rows:
+        if dedup_plans:
             with connection.cursor() as cursor:
                 cursor.executemany(
                     _PLAN_INSERT,
-                    [_plan_tuple(row) for row in plan_rows],
+                    [_plan_tuple(row) for row in dedup_plans],
                 )
 
     # 数据已提交，使所有结构化查询缓存失效（下次请求重建）
     redis_cache.bump_version()
 
     logger.info(
-        "Structured data reloaded: scores=%d plans=%d",
+        "Structured data reloaded: scores=%d (dedup from %d) plans=%d (dedup from %d)",
+        len(dedup_scores),
         len(score_rows),
+        len(dedup_plans),
         len(plan_rows),
     )
-    return len(score_rows), len(plan_rows)
+    return len(dedup_scores), len(dedup_plans)
+
