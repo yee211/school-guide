@@ -1,4 +1,4 @@
-# 谭锃个人主页 · 校园智答（School Introduction Assistant）
+# 个人主页 · 校园智答（School Introduction Assistant）
 
 个人开发者作品集网站，内嵌「校园智答」作为首个可交互项目。校园智答针对长沙工业学院的招生录取、专业设置、学费、校园生活等问题，提供基于知识库的智能问答。
 
