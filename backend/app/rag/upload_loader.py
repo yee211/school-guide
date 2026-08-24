@@ -16,6 +16,9 @@ from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.exceptions import ConversionError
 from langchain_core.documents import Document
 
+from app.rag.cleaner import document_cleaner
+
+
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -134,9 +137,11 @@ def load_uploaded_documents(
     except Exception as exc:
         raise ValueError(f"文档解析失败：{exc}") from exc
 
-    documents = _export_documents(filename, result.document)
+    raw_documents = _export_documents(filename, result.document)
+    documents = document_cleaner.clean_documents(raw_documents)
 
     if not documents:
-        raise ValueError("文件中没有可索引的文本内容")
+        raise ValueError("文件中没有可索引的有效文本内容")
 
     return documents
+

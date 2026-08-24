@@ -3,7 +3,9 @@ import re
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.rag.cleaner import document_cleaner
 from app.rag.metadata import enrich_document_metadata
+
 
 
 _TABLE_SEPARATOR_PATTERN = re.compile(
@@ -87,7 +89,12 @@ def _add_context(
 def split_documents(
     documents: list[Document],
 ) -> list[Document]:
+    cleaned_documents = document_cleaner.clean_documents(documents)
+    if not cleaned_documents:
+        return []
+
     text_splitter = RecursiveCharacterTextSplitter(
+
         chunk_size=500,
         chunk_overlap=80,
         add_start_index=True,
@@ -106,8 +113,9 @@ def split_documents(
     )
 
     chunks: list[Document] = []
-    for document in documents:
+    for document in cleaned_documents:
         document_chunks = text_splitter.split_documents([document])
+
 
         for chunk in document_chunks:
             if len(document_chunks) > 1 and _is_heading_only(

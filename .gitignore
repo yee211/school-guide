@@ -23,6 +23,8 @@ htmlcov/
 # 日志与临时解压目录
 *.log
 _deploy_extract/
+.git-acl-backup*
+
 
 # 数据与构建产物
 backend/data/processed/
