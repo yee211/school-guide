@@ -38,6 +38,7 @@ class RetrievalTrace:
     documents: list[Document]
     timings_ms: dict[str, float]
     rerank_fallback: bool = False
+    filter_fallback: bool = False
 
 
 class RetrieverService:
@@ -46,7 +47,7 @@ class RetrieverService:
         query: str,
         top_k: int,
         score_threshold: float | None,
-        filters: RetrievalFilters,
+        filters: RetrievalFilters | None,
     ) -> list[tuple[Document, float]]:
         try:
             query_embedding = await get_embedding_model().aembed_query(query)
@@ -152,32 +153,51 @@ class RetrieverService:
         filters = infer_retrieval_filters(retrieval_query, catalog)
         filter_ms = (perf_counter() - filter_started) * 1000
 
-        async def timed_semantic_search():
+        async def timed_semantic_search(
+            effective_filters: RetrievalFilters | None,
+        ):
             started = perf_counter()
             results = await self._semantic_search(
                 retrieval_query,
                 semantic_recall,
                 score_threshold,
-                filters=None,
+                filters=effective_filters,
             )
             return results, (perf_counter() - started) * 1000
 
-        async def timed_lexical_search():
+        async def timed_lexical_search(
+            effective_filters: RetrievalFilters | None,
+        ):
             started = perf_counter()
             results = await asyncio.to_thread(
                 postgres_knowledge_store.bm25_search,
                 retrieval_query,
                 lexical_recall,
-                filters=None,
+                filters=effective_filters,
             )
             return results, (perf_counter() - started) * 1000
 
         semantic_timed, lexical_timed = await asyncio.gather(
-            timed_semantic_search(),
-            timed_lexical_search(),
+            timed_semantic_search(filters),
+            timed_lexical_search(filters),
         )
         semantic_results, semantic_ms = semantic_timed
         lexical_results, lexical_ms = lexical_timed
+
+        # Metadata extracted from natural language can occasionally be too
+        # strict. Only when both filtered channels are empty do we retry
+        # without filters, preserving recall without weakening normal queries.
+        filter_fallback = False
+        if not filters.is_empty and not semantic_results and not lexical_results:
+            filter_fallback = True
+            semantic_timed, lexical_timed = await asyncio.gather(
+                timed_semantic_search(None),
+                timed_lexical_search(None),
+            )
+            semantic_results, fallback_semantic_ms = semantic_timed
+            lexical_results, fallback_lexical_ms = lexical_timed
+            semantic_ms += fallback_semantic_ms
+            lexical_ms += fallback_lexical_ms
 
         fusion_started = perf_counter()
         candidates = self._fuse_results(
@@ -221,13 +241,14 @@ class RetrieverService:
         }
         logger.info(
             "Retrieval completed: semantic=%d lexical=%d fused=%d final=%d "
-            "filters=%s timings_ms=%s rerank_fallback=%s",
+            "filters=%s timings_ms=%s filter_fallback=%s rerank_fallback=%s",
             len(semantic_results),
             len(lexical_results),
             len(candidates),
             len(documents),
             filters.as_dict(),
             timings_ms,
+            filter_fallback,
             rerank_fallback,
         )
         return RetrievalTrace(
@@ -239,6 +260,7 @@ class RetrieverService:
             documents=documents,
             timings_ms=timings_ms,
             rerank_fallback=rerank_fallback,
+            filter_fallback=filter_fallback,
         )
 
 

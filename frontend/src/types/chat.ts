@@ -19,4 +19,5 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   sources?: ChatSource[]
+  localOnly?: boolean
 }

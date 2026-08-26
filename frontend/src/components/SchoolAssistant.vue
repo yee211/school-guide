@@ -47,8 +47,21 @@ const suggestions = [
 ]
 
 const STORAGE_KEY = 'school_assistant_chat_history'
+const INITIAL_GREETING =
+  '你好，我是长工小助手！你可以问我关于长沙工业学院的学校概况、专业设置、录取分数线、招生计划、学费或校园生活等问题。'
 
-const messages = ref<ChatMessage[]>([])
+let id = 0
+
+function createInitialGreeting(): ChatMessage {
+  return {
+    id: ++id,
+    role: 'assistant',
+    content: INITIAL_GREETING,
+    localOnly: true,
+  }
+}
+
+const messages = ref<ChatMessage[]>([createInitialGreeting()])
 const input = ref('')
 const loading = ref(false)
 const mobileMenuOpen = ref(false)
@@ -57,7 +70,6 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const abortController = ref<AbortController | null>(null)
 const copiedId = ref<number | null>(null)
 let copyTimer: number | undefined
-let id = 0
 
 // 每次请求携带的对话历史条数上限（约 5 轮），控制 token 用量
 const MAX_HISTORY = 10
@@ -115,7 +127,7 @@ function clearChat() {
   if (loading.value) {
     stopGeneration()
   }
-  messages.value = []
+  messages.value = [createInitialGreeting()]
   localStorage.removeItem(STORAGE_KEY)
   mobileMenuOpen.value = false
 }
@@ -149,6 +161,7 @@ async function sendMessage(text = input.value) {
 
   // 截取最近的对话历史（不含本条），供后端做多轮上下文
   const history: HistoryTurn[] = messages.value
+    .filter((message) => !message.localOnly)
     .slice(-MAX_HISTORY)
     .map((m) => ({ role: m.role, content: m.content }))
 

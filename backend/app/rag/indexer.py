@@ -71,6 +71,47 @@ def rebuild_index(chunks: list[Document]) -> int:
     return stats.total
 
 
+def add_to_index(chunks: list[Document]) -> int:
+    """Incrementally add chunks while preserving the existing knowledge index."""
+    if not chunks:
+        raise ValueError("没有可以写入知识库的文本片段")
+
+    chunks_by_id = {
+        build_chunk_id(chunk): chunk
+        for chunk in chunks
+    }
+    existing_ids = postgres_knowledge_store.list_ids()
+    pending_ids = [
+        chunk_id
+        for chunk_id in chunks_by_id
+        if chunk_id not in existing_ids
+    ]
+    pending_documents = [
+        chunks_by_id[chunk_id]
+        for chunk_id in pending_ids
+    ]
+    embeddings = (
+        get_embedding_model().embed_documents(
+            [document.page_content for document in pending_documents]
+        )
+        if pending_documents
+        else []
+    )
+    desired_ids = [*existing_ids, *chunks_by_id]
+    stats = postgres_knowledge_store.sync_documents(
+        documents=pending_documents,
+        embeddings=embeddings,
+        ids=pending_ids,
+        desired_ids=desired_ids,
+    )
+    logger.info(
+        "Knowledge index incrementally updated: total=%d added=%d",
+        stats.total,
+        stats.added,
+    )
+    return stats.total
+
+
 def build_chunk_id(document: Document) -> str:
     metadata = document.metadata
     identity = "|".join(

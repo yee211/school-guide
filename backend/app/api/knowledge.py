@@ -4,8 +4,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 
-from app.rag.indexer import rebuild_index
-from app.rag.loader import RAW_DATA_DIR, load_knowledge_documents
+from app.rag.indexer import add_to_index
+from app.rag.loader import BACKEND_DIR, RAW_DATA_DIR
 from app.rag.splitter import split_documents
 from app.rag.upload_loader import (
     SUPPORTED_EXTENSIONS,
@@ -75,8 +75,6 @@ async def upload_document(
 
     RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    uploaded_chunks = split_documents(documents)
-
     async with UPLOAD_LOCK:
         target_path = RAW_DATA_DIR / filename
 
@@ -86,17 +84,23 @@ async def upload_document(
                 detail="知识库中已经存在同名文件",
             )
 
+        source = target_path.relative_to(BACKEND_DIR).as_posix()
+        for document in documents:
+            document.metadata["source"] = source
+
+        uploaded_chunks = split_documents(documents)
+        if not uploaded_chunks:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="文件清洗后没有可索引的有效文本内容",
+            )
+
         target_path.write_bytes(content)
 
         try:
-            all_documents = await asyncio.to_thread(
-                load_knowledge_documents,
-            )
-            all_chunks = split_documents(all_documents)
-
             indexed_count = await asyncio.to_thread(
-                rebuild_index,
-                all_chunks,
+                add_to_index,
+                uploaded_chunks,
             )
 
             # 同步更新结构化招生与录取数据表（如有结构化文件）
@@ -129,6 +133,5 @@ async def upload_document(
             "filename": filename,
             "uploaded_document_count": len(documents),
             "uploaded_chunk_count": len(uploaded_chunks),
-            "total_document_count": len(all_documents),
             "total_indexed_chunk_count": indexed_count,
         }
