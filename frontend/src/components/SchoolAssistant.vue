@@ -1,15 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowUp,
   BookOpen,
   Bot,
-  Building2,
   Check,
   Copy,
-  GraduationCap,
   Menu,
-  MessageCircleQuestion,
   Plus,
   RotateCcw,
   Sparkles,
@@ -21,6 +18,8 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { askSchoolAssistantStream } from '../services/chat'
 import type { ChatMessage, HistoryTurn } from '../types/chat'
+import KnowledgeExplorer from './KnowledgeExplorer.vue'
+import { knowledgeModules, type KnowledgeModuleId } from '../data/knowledgeModules'
 
 defineOptions({ name: 'SchoolAssistant' })
 
@@ -39,13 +38,6 @@ function renderMarkdown(content: string): string {
   }
 }
 
-const suggestions = [
-  { icon: Building2, label: '学校概况', prompt: '请介绍一下长沙工业学院的基本情况' },
-  { icon: GraduationCap, label: '专业设置', prompt: '学校目前有哪些特色专业？' },
-  { icon: BookOpen, label: '校园资源', prompt: '学校的教学资源和校园条件怎么样？' },
-  { icon: Sparkles, label: '办学特色', prompt: '学校在产教融合方面有哪些特色？' },
-]
-
 const STORAGE_KEY = 'school_assistant_chat_history'
 const INITIAL_GREETING =
   '你好，我是长工小助手！你可以问我关于长沙工业学院的学校概况、专业设置、录取分数线、招生计划、学费或校园生活等问题。'
@@ -62,6 +54,10 @@ function createInitialGreeting(): ChatMessage {
 }
 
 const messages = ref<ChatMessage[]>([createInitialGreeting()])
+const activeModuleId = ref<KnowledgeModuleId>('overview')
+const browsingKnowledge = ref(false)
+const hasConversation = computed(() => messages.value.some((message) => !message.localOnly))
+const showKnowledge = computed(() => browsingKnowledge.value || !hasConversation.value)
 const input = ref('')
 const loading = ref(false)
 const mobileMenuOpen = ref(false)
@@ -102,7 +98,25 @@ watch(
   { deep: true },
 )
 
+function selectModule(moduleId: KnowledgeModuleId) {
+  activeModuleId.value = moduleId
+  browsingKnowledge.value = true
+  mobileMenuOpen.value = false
+  nextTick(() => messageList.value?.scrollTo({ top: 0 }))
+}
+
+function resumeConversation() {
+  browsingKnowledge.value = false
+  scrollToBottom()
+}
+
+onUnmounted(() => {
+  stopGeneration()
+  if (copyTimer) clearTimeout(copyTimer)
+})
+
 function scrollToBottom() {
+  if (showKnowledge.value) return
   nextTick(() => messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: 'smooth' }))
 }
 
@@ -128,7 +142,11 @@ function clearChat() {
     stopGeneration()
   }
   messages.value = [createInitialGreeting()]
-  localStorage.removeItem(STORAGE_KEY)
+  browsingKnowledge.value = false
+  activeModuleId.value = 'overview'
+  input.value = ''
+  autoResize()
+  try { localStorage.removeItem(STORAGE_KEY) } catch { /* 存储不可用时仍可新建对话 */ }
   mobileMenuOpen.value = false
 }
 
@@ -158,6 +176,7 @@ async function regenerateLast() {
 async function sendMessage(text = input.value) {
   const question = text.trim()
   if (!question || loading.value) return
+  browsingKnowledge.value = false
 
   // 截取最近的对话历史（不含本条），供后端做多轮上下文
   const history: HistoryTurn[] = messages.value
@@ -174,7 +193,8 @@ async function sendMessage(text = input.value) {
 
   const assistantId = ++id
   let started = false
-  abortController.value = new AbortController()
+  const controller = new AbortController()
+  abortController.value = controller
 
   try {
     await askSchoolAssistantStream(
@@ -182,6 +202,7 @@ async function sendMessage(text = input.value) {
       history,
       {
         onDelta: (delta) => {
+          if (controller.signal.aborted) return
           if (!started) {
             messages.value.push({ id: assistantId, role: 'assistant', content: delta })
             started = true
@@ -192,10 +213,12 @@ async function sendMessage(text = input.value) {
           scrollToBottom()
         },
         onDone: (sources) => {
+          if (controller.signal.aborted) return
           const msg = messages.value.find((m) => m.id === assistantId)
           if (msg) msg.sources = sources
         },
         onError: (err) => {
+          if (controller.signal.aborted) return
           const msg = messages.value.find((m) => m.id === assistantId)
           if (msg) {
             if (!msg.content) msg.content = err
@@ -204,10 +227,10 @@ async function sendMessage(text = input.value) {
           }
         },
       },
-      abortController.value.signal,
+      controller.signal,
     )
   } catch (error: any) {
-    if (error?.name === 'AbortError') {
+    if (controller.signal.aborted || error?.name === 'AbortError') {
       return
     }
     const fallback = error instanceof Error ? error.message : '抱歉，回答生成失败，请稍后重试。'
@@ -218,14 +241,16 @@ async function sendMessage(text = input.value) {
       messages.value.push({ id: assistantId, role: 'assistant', content: fallback })
     }
   } finally {
-    loading.value = false
-    abortController.value = null
-    scrollToBottom()
+    if (abortController.value === controller) {
+      loading.value = false
+      abortController.value = null
+      scrollToBottom()
+    }
   }
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault()
     sendMessage()
   }
@@ -252,16 +277,18 @@ function handleKeydown(event: KeyboardEvent) {
       <section class="side-intro">
         <p class="eyebrow">CAMPUS AI GUIDE</p>
         <h1>校园智答</h1>
-        <p>关于长沙工业学院，你想了解的，都可以在这里找到答案。</p>
+        <p>按模块了解学校、招生与校园生活，回答基于现有知识库资料。</p>
       </section>
 
       <section class="quick-section">
         <p class="section-label">快速了解</p>
         <button
-          v-for="item in suggestions"
-          :key="item.label"
+          v-for="item in knowledgeModules"
+          :key="item.id"
           class="quick-link"
-          @click="sendMessage(item.prompt)"
+          type="button"
+          :aria-pressed="showKnowledge && activeModuleId === item.id"
+          @click="selectModule(item.id)"
         >
           <component :is="item.icon" :size="18" />
           <span>{{ item.label }}</span>
@@ -271,7 +298,7 @@ function handleKeydown(event: KeyboardEvent) {
 
       <div class="sidebar-footer">
         <span class="status-dot"></span>
-        <span>校园知识库已连接</span>
+        <span>基于校园知识库回答</span>
       </div>
     </aside>
 
@@ -290,6 +317,7 @@ function handleKeydown(event: KeyboardEvent) {
           </div>
         </div>
         <div class="topbar-right">
+          <button v-if="!showKnowledge" class="topbar-action-btn" type="button" @click="selectModule(activeModuleId)">知识分类</button>
           <button
             v-if="messages.length > 0"
             class="topbar-action-btn"
@@ -304,20 +332,15 @@ function handleKeydown(event: KeyboardEvent) {
       </header>
 
       <div ref="messageList" class="messages">
-        <section v-if="messages.length === 0" class="welcome">
-          <div class="welcome-icon">
-            <MessageCircleQuestion :size="30" />
-          </div>
-          <p class="eyebrow">你好，欢迎来到长沙工业学院</p>
-          <h2>今天想了解学校的什么？</h2>
-          <p class="welcome-copy">我会基于学校资料，为你解答校园概况、录取分数线、专业计划、学费及校园生活等问题。</p>
-          <div class="suggestion-grid">
-            <button v-for="item in suggestions" :key="item.prompt" @click="sendMessage(item.prompt)">
-              <component :is="item.icon" :size="20" />
-              <span>{{ item.prompt }}</span>
-            </button>
-          </div>
-        </section>
+        <KnowledgeExplorer
+          v-if="showKnowledge"
+          :active-id="activeModuleId"
+          :disabled="loading"
+          :has-conversation="hasConversation"
+          @select="selectModule"
+          @ask="sendMessage"
+          @resume="resumeConversation"
+        />
 
         <template v-else>
           <article v-for="(message, index) in messages" :key="message.id" class="message" :class="message.role">
@@ -353,7 +376,7 @@ function handleKeydown(event: KeyboardEvent) {
                 </button>
 
                 <button
-                  v-if="index === messages.length - 1 && !loading"
+                  v-if="index === messages.length - 1 && !loading && !message.localOnly"
                   class="action-btn"
                   type="button"
                   title="重新生成回答"
