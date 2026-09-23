@@ -16,6 +16,7 @@ from app.rag.metadata import (
     infer_retrieval_filters,
 )
 from app.core.db import connect
+from app.structured.parsers import GROUP_FLOOR, GROUP_MAX
 
 logger = logging.getLogger(__name__)
 
@@ -146,21 +147,24 @@ class StructuredQueryService:
         )
 
     @staticmethod
-    def _infer_score_type(question: str) -> str | None:
+    def _infer_score_type(question: str) -> tuple[str, ...] | None:
+        # 每个口径都要同时覆盖专业级和组级两种标签，否则问「2026 计算机最低
+        # 分」会因为 2026 只有专业组投档线而查空。
         if "最高" in question:
-            return "最高分"
+            return ("最高分", GROUP_MAX)
         if "控制线" in question:
-            return "控制线"
-        if "最低" in question:
-            return "最低分"
-        # 不强制过滤 score_type，允许同时查询最低分、最高分、控制线
+            return ("控制线",)
+        if "最低" in question or "投档" in question:
+            return ("最低分", GROUP_FLOOR)
+        # 不强制过滤 score_type，允许同时查询最低分、最高分、控制线；
+        # format_context 的「类型」列会让模型自己区分口径
         return None
 
     @staticmethod
     def _build_where(
         filters: RetrievalFilters,
         table_alias: str,
-        score_type: str | None = None,
+        score_type: tuple[str, ...] | None = None,
     ) -> tuple[sql.Composable, list]:
         alias = sql.Identifier(table_alias)
         conditions: list[sql.Composable] = []
@@ -192,17 +196,35 @@ class StructuredQueryService:
                 )
                 params.append([f"%{g}" for g in fuzzy])
         if score_type:
-            conditions.append(sql.SQL("{}.score_type = %s").format(alias))
-            params.append(score_type)
+            conditions.append(
+                sql.SQL("{}.score_type = ANY(%s)").format(alias)
+            )
+            params.append(list(score_type))
 
         if not conditions:
             return sql.SQL(""), []
         return sql.SQL(" AND ") + sql.SQL(" AND ").join(conditions), params
 
+    @staticmethod
+    def _coerce_score_row(row: dict) -> dict:
+        d = dict(row)
+        score = d.get("score")
+        if score is not None:
+            d["score"] = float(score)
+        return d
+
+    @staticmethod
+    def _coerce_plan_row(row: dict) -> dict:
+        d = dict(row)
+        tuition = d.get("tuition")
+        if tuition is not None:
+            d["tuition"] = float(tuition)
+        return d
+
     def _query_scores(
         self,
         filters: RetrievalFilters,
-        score_type: str | None,
+        score_type: tuple[str, ...] | None,
     ) -> list[dict]:
         where, params = self._build_where(filters, "s", score_type)
         with connect() as connection:
@@ -219,7 +241,7 @@ class StructuredQueryService:
                 ).format(where=where),
                 params,
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._coerce_score_row(row) for row in rows]
 
     def _query_plans(self, filters: RetrievalFilters) -> list[dict]:
         where, params = self._build_where(filters, "p")
@@ -238,12 +260,12 @@ class StructuredQueryService:
                 ).format(where=where),
                 params,
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._coerce_plan_row(row) for row in rows]
 
     def query(
         self,
         filters: RetrievalFilters,
-        score_type: str | None = None,
+        score_type: tuple[str, ...] | None = None,
     ) -> StructuredResult:
         is_targeted = bool(
             filters.years
@@ -261,8 +283,8 @@ class StructuredQueryService:
         cached = redis_cache.get_json(cache_key)
         if cached is not None:
             return StructuredResult(
-                score_rows=cached["score_rows"],
-                plan_rows=cached["plan_rows"],
+                score_rows=[self._coerce_score_row(r) for r in cached.get("score_rows", [])],
+                plan_rows=[self._coerce_plan_row(r) for r in cached.get("plan_rows", [])],
                 source_files=tuple(cached["source_files"]),
                 is_targeted=True,
             )
@@ -281,7 +303,7 @@ class StructuredQueryService:
     def _cache_key(
         self,
         filters: RetrievalFilters,
-        score_type: str | None,
+        score_type: tuple[str, ...] | None,
     ) -> str:
         version = redis_cache.get_version()
         raw = json.dumps(
@@ -295,7 +317,7 @@ class StructuredQueryService:
     def _query_db(
         self,
         filters: RetrievalFilters,
-        score_type: str | None,
+        score_type: tuple[str, ...] | None,
     ) -> StructuredResult:
         want_scores = not filters.document_types or "录取分数" in filters.document_types
         want_plans = not filters.document_types or "招生计划" in filters.document_types

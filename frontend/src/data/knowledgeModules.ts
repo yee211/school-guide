@@ -5,15 +5,15 @@ import { BookOpen, Building2, ClipboardList, GraduationCap, House, TrendingUp } 
 export const knowledgeModules = [
   {
     id: 'overview', label: '学校概况', icon: Building2,
-    description: '了解学校沿革、办学定位、师资与产教融合。',
-    sources: ['school_overview.md', '长沙工业学院基本信息.md'],
-    questions: ['请介绍一下长沙工业学院的基本情况', '长沙工业学院的历史沿革是怎样的？', '学校的师资和实验实训条件怎么样？', '学校在产教融合方面有哪些合作？'],
+    description: '了解学校沿革、办学定位、师资与教学科研机构。',
+    sources: ['school_overview.md', 'crawled/师资队伍.md', 'crawled/教学机构.md'],
+    questions: ['请介绍一下长沙工业学院的基本情况', '长沙工业学院的历史沿革是怎样的？', '学校的师资队伍与高层次人才情况如何？', '学校有哪些二级学院和教学机构？'],
   },
   {
     id: 'majors', label: '学院专业', icon: GraduationCap,
-    description: '从二级学院到专业设置，了解学科方向和选科要求。',
-    sources: ['长沙工业学院基本信息.md', '长沙工业学院2026年招生计划.md'],
-    questions: ['长沙工业学院有哪些二级学院和专业？', '学校有哪些特色专业？', '2026年湖南物理类有哪些招生专业及选科要求？', '2026年湖南历史类有哪些招生专业？'],
+    description: '从二级学院到专业设置，了解各专业核心课程与产学研合作。',
+    sources: ['crawled/专业介绍.md', 'crawled/计算机科学与技术.md', 'crawled/软件工程.md', 'crawled/机械设计制造及其自动化.md'],
+    questions: ['计算机科学与技术专业的核心主干课程有哪些？', '软件工程专业与哪些企业开展深度产教融合？', '机械设计制造及其自动化专业有哪些核心课程？', '机器人工程专业的专业概述与培养目标是什么？'],
   },
   {
     id: 'admissions', label: '招生与学费', icon: ClipboardList,

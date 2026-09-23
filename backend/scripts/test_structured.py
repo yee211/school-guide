@@ -8,7 +8,7 @@ from app.structured.normalize import (
     normalize_subject,
     parse_score_rank,
 )
-from app.structured.parsers import parse_all
+from app.structured.parsers import GROUP_FLOOR, parse_all
 from app.structured.query import structured_query_service
 
 
@@ -32,15 +32,42 @@ def main() -> None:
     assert len(score_rows) > 0
     assert len(plan_rows) > 0
 
-    # 4. 数据解析验证：2026 物理103组 最低分 480 命中
-    conflict = {
+    # 4. 分数口径：组级分数必须标成「专业组投档线」，不能和专业级「最低分」混用
+    group_floor_103 = {
         r["score"]
         for r in score_rows
         if r["year"] == 2026
         and r["group_no"] == "物理103组"
-        and r["score_type"] == "最低分"
+        and r["score_type"] == GROUP_FLOOR
     }
-    assert 480.0 in conflict, conflict
+    assert 480.0 in group_floor_103, group_floor_103
+
+    # 同一 (年份, 省份, 科类, 专业, 类型, 批次) 不允许出现两个不同的分数。
+    # 曾经 历年汇总 的组投档线和 CIT2425 的专业最低分都标成「最低分」，
+    # 2024 计算机科学与技术 会同时返回 466 和 471。
+    # 计划数同理：分数文件不再吐 plan 行，否则 2026 有 14 个专业与官方计划表冲突。
+    def assert_no_conflict(rows, key_fields, value_field):
+        buckets: dict[tuple, dict[str, set]] = {}
+        for r in rows:
+            key = tuple(r[f] or "" for f in key_fields)
+            slot = buckets.setdefault(key, {"values": set(), "sources": set()})
+            slot["values"].add(r[value_field])
+            slot["sources"].add(r["source_file"])
+        conflicting = {k: v["values"] for k, v in buckets.items() if len(v["values"]) > 1}
+        assert not conflicting, conflicting
+        repeated = {k: v["sources"] for k, v in buckets.items() if len(v["sources"]) > 1}
+        assert not repeated, repeated
+
+    assert_no_conflict(
+        score_rows,
+        ("year", "province", "subject_category", "major", "score_type", "batch"),
+        "score",
+    )
+    assert_no_conflict(
+        plan_rows,
+        ("year", "province", "subject_category", "group_no", "major"),
+        "plan",
+    )
 
 
     # 5. 结构化查询：2026 物理105组 最低投档分命中 499
@@ -52,22 +79,22 @@ def main() -> None:
     assert filters.groups == ("物理105组",), filters.as_dict()
     assert filters.document_types == ("录取分数",)
 
-    result = structured_query_service.query(filters, "最低分")
+    result = structured_query_service.query(filters, ("最低分", GROUP_FLOOR))
     assert result.is_targeted
-    assert any(r["score"] == 499.0 for r in result.score_rows), result.score_rows
+    assert any(float(r["score"]) == 499.0 for r in result.score_rows), result.score_rows
 
     # 6. 招生计划查询：人工智能学费 4800
     question = "人工智能专业学费是多少？"
     filters = infer_retrieval_filters(question, catalog)
     assert filters.document_types == ("招生计划",), filters.as_dict()
     result = structured_query_service.query(filters)
-    assert any(r["tuition"] == 4800.0 for r in result.plan_rows), result.plan_rows
+    assert any(float(r["tuition"]) == 4800.0 for r in result.plan_rows), result.plan_rows
 
     print(
         {
             "score_rows": len(score_rows),
             "plan_rows": len(plan_rows),
-            "conflict_103组": sorted(conflict),
+            "floor_103组": sorted(group_floor_103),
             "catalog_years": catalog.years,
             "catalog_majors_count": len(catalog.majors),
             "catalog_groups_count": len(catalog.groups),

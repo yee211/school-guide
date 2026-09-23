@@ -236,8 +236,37 @@ def _extract_majors(text: str) -> list[str]:
     )
 
 
+# 新闻类正文里经常出现「录取分数线」「招生计划」等词，如果先走关键词匹配，
+# 这些 chunk 会被误标成数据类文档，进而被数据型查询召回——但它们并不包含
+# 真实数据，只会给生成模型喂噪声。所以类目判定必须排在关键词判定之前。
+# 类目名的来源：合并语料每个文件以「# <类目>」开头，splitter 的
+# _heading_context 会把生效的标题层级回填进每个 chunk 正文。
+_NEWS_CATEGORIES = (
+    "综合新闻",
+    "学院要闻",
+    "新闻",
+    "视觉长工",
+    "媒体长工",
+)
+
+_OVERVIEW_CATEGORIES = (
+    "学校概况",
+    "学校简介",
+    "师资队伍",
+    "教学机构",
+    "科学研究",
+    "党政管理机构",
+    "党建思政",
+    "校友工作",
+)
+
+
 def _classify_document_type(text: str) -> str:
     lowered = text.lower()
+    if any(f"# {category}" in text for category in _NEWS_CATEGORIES):
+        return "校园动态"
+    if any(f"# {category}" in text for category in _OVERVIEW_CATEGORIES):
+        return "学校概况"
     if any(keyword in text for keyword in ("投档", "录取分数", "分数线")):
         return "录取分数"
     if any(keyword in text for keyword in ("招生计划", "拟招生", "专业计划")):
@@ -332,20 +361,23 @@ def infer_retrieval_filters(
         )
     ):
         document_types = ("录取分数",)
-    elif any(
-        keyword in query
-        for keyword in (
-            "招生计划",
-            "计划数",
-            "招生人数",
-            "招生多少",
-            "招多少",
-            "学费",
-            "收费",
-            "学制",
-            "选科",
-            "选考",
+    elif (
+        any(
+            keyword in query
+            for keyword in (
+                "招生计划",
+                "计划数",
+                "招生人数",
+                "招生多少",
+                "招多少",
+                "学费",
+                "收费",
+                "学制",
+                "选科",
+                "选考",
+            )
         )
+        and "转专业" not in query
     ):
         document_types = ("招生计划",)
     elif any(

@@ -17,6 +17,7 @@ htmlcov/
 # IDE 与编辑器配置
 .idea/
 .vscode/
+.agents/
 *.swp
 *.swo
 

@@ -26,6 +26,12 @@ def load_knowledge_documents() -> list[Document]:
     )
 
     for file_path in file_paths:
+        # 这些文件的内容已抽进 school_admission_* 结构化表并由精确查询路径
+        # 回答；再进向量索引会让同一份数据存在两个来源，检索可能命中与结构
+        # 化查询结果冲突的旧文本。
+        if file_path.name in STRUCTURED_FILENAMES:
+            continue
+
         try:
             file_documents = load_uploaded_documents(
                 filename=file_path.name,

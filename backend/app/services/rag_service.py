@@ -58,14 +58,30 @@ class RAGService:
 
         return sources
 
-    @staticmethod
-    def _history_to_messages(history) -> list[BaseMessage]:
+    MAX_HISTORY_MESSAGES = 8  # 最多保留最近 4 轮问答（8 条消息）
+    MAX_HISTORY_CONTENT_CHARS = 1000  # 历史单条消息内容截断保护
+
+    @classmethod
+    def _history_to_messages(cls, history) -> list[BaseMessage]:
+        """对多轮对话进行滑动窗口修剪与单条长度保护，防止 Token 膨胀。"""
+        if not history:
+            return []
+
+        trimmed = (
+            history[-cls.MAX_HISTORY_MESSAGES:]
+            if len(history) > cls.MAX_HISTORY_MESSAGES
+            else history
+        )
+
         messages: list[BaseMessage] = []
-        for item in history or ():
+        for item in trimmed:
+            content = (item.content or "").strip()
+            if len(content) > cls.MAX_HISTORY_CONTENT_CHARS:
+                content = content[:cls.MAX_HISTORY_CONTENT_CHARS] + "…[截断]"
             if item.role == "user":
-                messages.append(HumanMessage(content=item.content))
+                messages.append(HumanMessage(content=content))
             else:
-                messages.append(AIMessage(content=item.content))
+                messages.append(AIMessage(content=content))
         return messages
 
     @staticmethod

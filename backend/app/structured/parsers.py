@@ -26,6 +26,13 @@ RAW_PREFIX = "data/raw/"
 
 _EMPTY = {"", "/", "-", "—", "－", "–", "--", "－"}
 
+# 分数口径。带「专业组」列的表，其最高分/投档分是**组级**数字——组内每个专业
+# 都重复同一个值（如 2024 物理104组六个专业全是 466）；不带组列的表才是专业级
+# （计算机 471、机械 471、通信 466）。两者若都标成「最低分」，同一
+# (年份, 省份, 科类, 专业) 就会存下两个不同的数，查询时一起返回给 LLM。
+GROUP_FLOOR = "专业组投档线"
+GROUP_MAX = "专业组最高分"
+
 
 def _parse_int(cell: str) -> int | None:
     cell = strip_markdown_bold(cell or "").strip()
@@ -112,12 +119,11 @@ def _split_headings(text: str) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# 文件1：CIT2425省内投档线.md —— 专业粒度，2024/2025 计划数 + 分数线位次
+# 文件1：CIT2425省内投档线.md —— 专业粒度，2024/2025 分数线 + 位次
 # ---------------------------------------------------------------------------
 def parse_cit2425(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
     _, rows = parse_pipe_table(text)
     score_rows: list[dict] = []
-    plan_rows: list[dict] = []
 
     for row in rows:
         if len(row) < 6:
@@ -126,20 +132,6 @@ def parse_cit2425(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
         major = normalize_major(row[1])
         if not subject or not major:
             continue
-
-        for year, col in ((2024, 2), (2025, 3)):
-            plan = _parse_int(row[col])
-            if plan is not None:
-                plan_rows.append(
-                    _plan_row(
-                        year=year,
-                        province="湖南省",
-                        subject_category=subject,
-                        plan=plan,
-                        major=major,
-                        source_file=source_file,
-                    )
-                )
 
         for year, col in ((2024, 4), (2025, 5)):
             score, rank = parse_score_rank(row[col])
@@ -157,7 +149,10 @@ def parse_cit2425(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
                     )
                 )
 
-    return score_rows, plan_rows
+    # 计划数（第 2/3 列）不入库：四个专用招生计划文件已覆盖全部
+    # (年份, 省份, 科类, 专业) 组合，且带学制/收费标准。这里的数字是投档表
+    # 的二次转述，2026 年有 14 个专业与官方计划表不一致。
+    return score_rows, []
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +161,6 @@ def parse_cit2425(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
 def parse_cit2026(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
     _, rows = parse_pipe_table(text)
     score_rows: list[dict] = []
-    plan_rows: list[dict] = []
 
     for row in rows:
         if len(row) < 6:
@@ -177,20 +171,6 @@ def parse_cit2026(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
         if not subject:
             continue
 
-        plan = _parse_int(row[3])
-        if plan is not None and major:
-            plan_rows.append(
-                _plan_row(
-                    year=2026,
-                    province="湖南省",
-                    subject_category=subject,
-                    plan=plan,
-                    group_no=group_no,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
-
         max_score, max_rank = parse_score_rank(row[4])
         if max_score is not None:
             score_rows.append(
@@ -198,7 +178,7 @@ def parse_cit2026(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
                     year=2026,
                     province="湖南省",
                     subject_category=subject,
-                    score_type="最高分",
+                    score_type=GROUP_MAX,
                     score=max_score,
                     admission_rank=max_rank,
                     group_no=group_no,
@@ -214,7 +194,7 @@ def parse_cit2026(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
                     year=2026,
                     province="湖南省",
                     subject_category=subject,
-                    score_type="最低分",
+                    score_type=GROUP_FLOOR,
                     score=min_score,
                     admission_rank=min_rank,
                     group_no=group_no,
@@ -223,7 +203,8 @@ def parse_cit2026(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
                 )
             )
 
-    return score_rows, plan_rows
+    # 专业计划数（第 3 列）不入库，理由同 parse_cit2425。
+    return score_rows, []
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +218,8 @@ def _parse_summary_province(
 ) -> tuple[list[dict], list[dict]]:
     """省内表：列 = 科类0/组别1/专业2/计划数3/最高分4/投档分5。
 
-    只对科类/组别做前向填充；最高分/投档分是专业级数据，缺失即缺失，不填充。
+    只对科类/组别做前向填充。最高分/投档分是**组级**数字（组内每个专业重复同
+    一个值），按 GROUP_MAX/GROUP_FLOOR 入库，别和专业级的「最低分」混用。
     """
     _, rows = parse_pipe_table(content)
     if not rows:
@@ -245,7 +227,6 @@ def _parse_summary_province(
 
     filled = forward_fill(rows, {0, 1})
     score_rows: list[dict] = []
-    plan_rows: list[dict] = []
 
     for row in filled:
         subject = normalize_subject(strip_markdown_bold(row[0]))
@@ -254,20 +235,6 @@ def _parse_summary_province(
         if not subject or not major or major in {"专业", "招生专业"}:
             continue
 
-        plan = _parse_int(row[3])
-        if plan is not None:
-            plan_rows.append(
-                _plan_row(
-                    year=year,
-                    province=province,
-                    subject_category=subject,
-                    plan=plan,
-                    group_no=group_no,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
-
         max_score, max_rank = parse_score_rank(row[4])
         if max_score is not None:
             score_rows.append(
@@ -275,7 +242,7 @@ def _parse_summary_province(
                     year=year,
                     province=province,
                     subject_category=subject,
-                    score_type="最高分",
+                    score_type=GROUP_MAX,
                     score=max_score,
                     admission_rank=max_rank,
                     group_no=group_no,
@@ -291,7 +258,7 @@ def _parse_summary_province(
                     year=year,
                     province=province,
                     subject_category=subject,
-                    score_type="最低分",
+                    score_type=GROUP_FLOOR,
                     score=min_score,
                     admission_rank=min_rank,
                     group_no=group_no,
@@ -300,7 +267,8 @@ def _parse_summary_province(
                 )
             )
 
-    return score_rows, plan_rows
+    # 计划数（第 3 列）不入库，理由同 parse_cit2425。
+    return score_rows, []
 
 
 def _parse_summary_outprovince(
@@ -318,7 +286,6 @@ def _parse_summary_outprovince(
 
     filled = forward_fill(rows, {0, 1, 6})
     score_rows: list[dict] = []
-    plan_rows: list[dict] = []
 
     for row in filled:
         province = normalize_province(strip_markdown_bold(row[0]))
@@ -326,19 +293,6 @@ def _parse_summary_outprovince(
         major = normalize_major(strip_markdown_bold(row[2]))
         if not province or not subject or not major or major in {"专业", "招生专业"}:
             continue
-
-        plan = _parse_int(row[3])
-        if plan is not None:
-            plan_rows.append(
-                _plan_row(
-                    year=2025,
-                    province=province,
-                    subject_category=subject,
-                    plan=plan,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
 
         max_score, max_rank = parse_score_rank(row[4])
         if max_score is not None:
@@ -385,7 +339,8 @@ def _parse_summary_outprovince(
                 )
             )
 
-    return score_rows, plan_rows
+    # 计划数（第 3 列）不入库，理由同 parse_cit2425。
+    return score_rows, []
 
 
 def _parse_control_lines(
@@ -436,75 +391,6 @@ def _parse_control_lines(
     return score_rows, []
 
 
-def _parse_summary_2026_score(
-    content: str,
-    source_file: str,
-) -> tuple[list[dict], list[dict]]:
-    """2026 投档线表（组粒度）：列 = 科类0/专业组号1/专业名称2/计划数3/最高分4/最低投档分5。"""
-    _, rows = parse_pipe_table(content)
-    if not rows:
-        return [], []
-
-    filled = forward_fill(rows, {0})
-    score_rows: list[dict] = []
-    plan_rows: list[dict] = []
-
-    for row in filled:
-        subject = normalize_subject(strip_markdown_bold(row[0]))
-        group_no = normalize_group(strip_markdown_bold(row[1]), subject)
-        major = normalize_major(strip_markdown_bold(row[2])) if len(row) > 2 else None
-        if not subject or not group_no:
-            continue
-
-        plan = _parse_int(row[3])
-        if plan is not None:
-            plan_rows.append(
-                _plan_row(
-                    year=2026,
-                    province="湖南省",
-                    subject_category=subject,
-                    plan=plan,
-                    group_no=group_no,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
-
-        max_score, max_rank = parse_score_rank(row[4])
-        if max_score is not None:
-            score_rows.append(
-                _score_row(
-                    year=2026,
-                    province="湖南省",
-                    subject_category=subject,
-                    score_type="最高分",
-                    score=max_score,
-                    admission_rank=max_rank,
-                    group_no=group_no,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
-
-        min_score, min_rank = parse_score_rank(row[5])
-        if min_score is not None:
-            score_rows.append(
-                _score_row(
-                    year=2026,
-                    province="湖南省",
-                    subject_category=subject,
-                    score_type="最低分",
-                    score=min_score,
-                    admission_rank=min_rank,
-                    group_no=group_no,
-                    major=major,
-                    source_file=source_file,
-                )
-            )
-
-    return score_rows, plan_rows
-
-
 
 def parse_summary(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
     score_rows: list[dict] = []
@@ -519,9 +405,11 @@ def parse_summary(text: str, source_file: str) -> tuple[list[dict], list[dict]]:
             s, p = _parse_summary_outprovince(content, source_file)
         elif "控制分数线" in title:
             s, p = _parse_control_lines(content, source_file)
-        elif "投档分数线" in title or "投档分" in title:
-            s, p = _parse_summary_2026_score(content, source_file)
         else:
+            # 「四、2026年湖南省本科批投档分数线」这一节不在这里解析：它和
+            # CIT2026省内投档线.md 是同一张表，两边都入库会让 2026 年每个
+            # (专业组, 专业) 存下两行只差 source_file 的重复数据。2026 投档
+            # 线以专用文件为准，汇总文件只负责 2024/2025 和省外。
             continue
         score_rows.extend(s)
         plan_rows.extend(p)
