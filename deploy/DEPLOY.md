@@ -63,7 +63,7 @@ docker compose ps          # 三个服务都应是 running/healthy
 docker compose logs -f backend   # 跟踪日志，看到"知识库检索预热"即启动成功
 ```
 
-首次构建需要安装 torch/transformers/docling 等依赖，约 10~20 分钟，耐心等待。
+首次构建安装轻量依赖（markitdown 等），仅需 1~2 分钟即可完成构建。
 
 ## 第 5 步：初始化知识库数据
 
@@ -78,7 +78,7 @@ docker compose exec backend python -m scripts.import_structured
 ```
 
 后续也可以直接通过网页端 `/knowledge/upload` 上传新文档。
-注意：首次解析文档时 docling 会下载模型（几百 MB，存于 modelcache 卷，重建镜像不会重复下载）。
+注意：采用 MarkItDown 轻量解析引擎，无需下载额外深度学习模型权重，即开即用。
 
 ## 第 6 步：创建前端站点并配置反代
 

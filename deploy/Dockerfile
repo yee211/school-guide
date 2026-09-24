@@ -6,8 +6,7 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     PIP_DEFAULT_TIMEOUT=120 \
     PIP_RETRIES=10 \
-    PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple \
-    HF_HOME=/root/.cache/huggingface
+    PIP_INDEX_URL=https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple
 
 WORKDIR /app
 
@@ -15,7 +14,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install --upgrade pip \
-    && python -m pip install --no-deps torch --index-url https://download.pytorch.org/whl/cpu \
     && python -m pip install -r requirements.txt
 
 # 拷贝后端代码

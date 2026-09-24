@@ -46,7 +46,7 @@ LLM 生成回答 ──→ SSE 流式响应 + 资料来源
 | API | FastAPI、Pydantic、Uvicorn、SSE |
 | Agent / RAG | LangChain、上下文改写、混合检索、RRF、reranker |
 | 数据 | PostgreSQL、pgvector、BM25、Redis |
-| 文档处理 | Docling、文档清洗、分块上下文补全、元数据提取 |
+| 文档处理 | Microsoft MarkItDown、文档清洗、分块上下文补全、元数据提取 |
 | 部署 | Docker Compose、Nginx、宝塔面板 |
 
 ## 本地运行

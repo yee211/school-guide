@@ -4,17 +4,8 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from docling.datamodel.base_models import DocumentStream, InputFormat
-from docling.datamodel.object_detection_engine_options import (
-    TransformersObjectDetectionEngineOptions,
-)
-from docling.datamodel.pipeline_options import (
-    LayoutObjectDetectionOptions,
-    PdfPipelineOptions,
-)
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.exceptions import ConversionError
 from langchain_core.documents import Document
+from markitdown import MarkItDown
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -23,88 +14,28 @@ SUPPORTED_EXTENSIONS = {
     ".docx",
     ".pptx",
     ".xlsx",
+    ".csv",
 }
 
-_PAGE_METADATA_KEYS = {
-    ".pdf": "page",
-    ".pptx": "slide",
-}
 _CONVERSION_LOCK = Lock()
 
 
 @lru_cache(maxsize=1)
-def _get_converter() -> DocumentConverter:
-    pdf_options = PdfPipelineOptions(
-        do_ocr=True,
-        do_table_structure=True,
-        layout_options=LayoutObjectDetectionOptions(
-            engine_options=TransformersObjectDetectionEngineOptions(
-                compile_model=False,
-            ),
-        ),
-    )
-
-    return DocumentConverter(
-        format_options={
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=pdf_options,
-            ),
-        },
-    )
+def _get_converter() -> MarkItDown:
+    return MarkItDown()
 
 
-def _build_metadata(filename: str) -> dict[str, Any]:
+def _build_metadata(
+    filename: str,
+    title: str | None = None,
+) -> dict[str, Any]:
     return {
-        "title": Path(filename).stem,
+        "title": title or Path(filename).stem,
         "filename": filename,
         "source": filename,
         "file_type": Path(filename).suffix.lower(),
-        "parser": "docling",
+        "parser": "markitdown",
     }
-
-
-def _export_documents(
-    filename: str,
-    docling_document: Any,
-) -> list[Document]:
-    suffix = Path(filename).suffix.lower()
-    page_metadata_key = _PAGE_METADATA_KEYS.get(suffix)
-    pages = getattr(docling_document, "pages", {})
-
-    if page_metadata_key and pages:
-        documents: list[Document] = []
-
-        for page_number in sorted(pages):
-            text = docling_document.export_to_markdown(
-                page_no=page_number,
-            ).strip()
-
-            if not text:
-                continue
-
-            metadata = _build_metadata(filename)
-            metadata[page_metadata_key] = page_number
-
-            documents.append(
-                Document(
-                    page_content=text,
-                    metadata=metadata,
-                )
-            )
-
-        return documents
-
-    text = docling_document.export_to_markdown().strip()
-
-    if not text:
-        return []
-
-    return [
-        Document(
-            page_content=text,
-            metadata=_build_metadata(filename),
-        )
-    ]
 
 
 def load_uploaded_documents(
@@ -119,23 +50,41 @@ def load_uploaded_documents(
     if not content:
         raise ValueError("文件内容为空")
 
-    source = DocumentStream(
-        name=filename,
-        stream=BytesIO(content),
-    )
+    text: str = ""
+    title: str | None = None
 
     try:
-        # Docling 会缓存并复用解析模型；串行转换可避免共享模型被并发调用。
         with _CONVERSION_LOCK:
-            result = _get_converter().convert(source)
-    except ConversionError as exc:
-        raise ValueError(f"无法解析文件：{exc}") from exc
+            converter = _get_converter()
+            result = converter.convert_stream(
+                BytesIO(content),
+                file_extension=suffix,
+            )
+            if result and result.text_content:
+                text = result.text_content.strip()
+            title = getattr(result, "title", None)
     except Exception as exc:
-        raise ValueError(f"文档解析失败：{exc}") from exc
+        # 针对纯文本和 Markdown 格式提供编码回退机制
+        if suffix in {".txt", ".md"}:
+            for encoding in ("utf-8", "gb18030", "gbk"):
+                try:
+                    text = content.decode(encoding).strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            else:
+                raise ValueError(f"文档解析失败：{exc}") from exc
+        else:
+            raise ValueError(f"文档解析失败：{exc}") from exc
 
-    documents = _export_documents(filename, result.document)
-
-    if not documents:
+    if not text:
         raise ValueError("文件中没有可索引的有效文本内容")
 
-    return documents
+    metadata = _build_metadata(filename, title=title)
+
+    return [
+        Document(
+            page_content=text,
+            metadata=metadata,
+        )
+    ]
