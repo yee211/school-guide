@@ -47,7 +47,29 @@ MIN_BODY_CHARS = 200
 
 _HEADER_FIELD = re.compile(r"^-\s+\*\*(.+?)\*\*:\s*(.*)$")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
-_BARE_URL = re.compile(r"(?:https?:)?//\S+")
+_DOUBLE_MARKDOWN_LINK = re.compile(r"\[\[([^\]\n]*)\]\]\([^\n)]*\)")
+_MARKDOWN_LINK = re.compile(
+    r"\[([^\]\n]*(?:\n[^\]\n]*){0,2})\]\([^\n)]*\)"
+)
+# 爬虫遇到空 href 或被过滤的 URL 时，可能留下 ``[文字](<``、``[文字](``
+# 这类没有右括号的残片。只匹配到行尾，避免跨行吞掉正文。
+_DANGLING_MARKDOWN_LINK = re.compile(
+    r"\[([^\]\n]*(?:\n[^\]\n]*){0,2})\]\([ \t]*<?[^\n)]*$",
+    re.MULTILINE,
+)
+# 部分导航列表的开括号被上游解析器丢掉，只剩 ``文字](<URL>) [``；这两条
+# 规则只移除链接目标的标点残片，前面的可读文字保持不变。
+_ORPHAN_MARKDOWN_TARGET = re.compile(r"[ \t]*\]\([ \t]*<[^>\n]*>\)[ \t]*\[?")
+_DANGLING_ORPHAN_TARGET = re.compile(
+    r"[ \t]*\]\([ \t]*<?[^\n)]*$",
+    re.MULTILINE,
+)
+_URL_BODY = r"(?:https?:)?//[A-Za-z0-9._~:/?#@!$&'*+,;=%\[\]-]+"
+_WRAPPED_BARE_URL = re.compile(rf"[<(]{_URL_BODY}[>)]")
+_BARE_URL = re.compile(_URL_BODY)
+_ISOLATED_MARKDOWN_NOISE = re.compile(
+    r"(?m)^[ \t]*(?:\[|\]|[-*+])[ \t]*$"
+)
 _MD_NOISE = re.compile(r"[#>*|\[\]()]")
 
 
@@ -78,9 +100,17 @@ def _parse_article(path: Path) -> tuple[dict[str, str], str, str]:
 
 
 def _clean_body(body: str) -> str:
-    """去掉图片链接、裸 URL 和多余空行，正文文本保持原样。"""
+    """去掉图片、链接目标和多余空行，同时保留链接的可读文字。"""
     text = _IMAGE.sub(" ", body)
+    text = _DOUBLE_MARKDOWN_LINK.sub(r"\1", text)
+    text = _MARKDOWN_LINK.sub(r"\1", text)
+    text = _DANGLING_MARKDOWN_LINK.sub(r"\1", text)
+    text = _ORPHAN_MARKDOWN_TARGET.sub("", text)
+    text = _DANGLING_ORPHAN_TARGET.sub("", text)
+    text = _WRAPPED_BARE_URL.sub("", text)
     text = _BARE_URL.sub(" ", text)
+    text = _ISOLATED_MARKDOWN_NOISE.sub("", text)
+    text = re.sub(r"[ \t]+(?=\n|$)", "", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 

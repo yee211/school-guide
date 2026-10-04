@@ -5,7 +5,7 @@ from threading import Lock
 from typing import Any
 
 from langchain_core.documents import Document
-from markitdown import MarkItDown
+from markitdown import MarkItDown, StreamInfo
 
 SUPPORTED_EXTENSIONS = {
     ".txt",
@@ -58,10 +58,13 @@ def load_uploaded_documents(
             converter = _get_converter()
             result = converter.convert_stream(
                 BytesIO(content),
-                file_extension=suffix,
+                stream_info=StreamInfo(
+                    extension=suffix,
+                    filename=filename,
+                ),
             )
-            if result and result.text_content:
-                text = result.text_content.strip()
+            if result and result.markdown:
+                text = result.markdown.strip()
             title = getattr(result, "title", None)
     except Exception as exc:
         # 针对纯文本和 Markdown 格式提供编码回退机制
