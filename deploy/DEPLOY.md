@@ -1,4 +1,4 @@
-# 校园智答 · 宝塔轻量服务器部署指南
+# School Guide · 宝塔轻量服务器部署指南
 
 适用环境：宝塔面板轻量服务器（4核4G），后端 Docker 化 + 前端宝塔站点托管。
 
@@ -34,10 +34,10 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
 ## 第 2 步：上传代码
 
-本地打包项目（**排除** `.venv`、`node_modules`、`__pycache__`），通过宝塔「文件」上传到例如 `/www/wwwroot/school-assistant` 并解压。目录结构应为：
+本地打包项目（**排除** `.venv`、`node_modules`、`__pycache__`），通过宝塔「文件」上传到例如 `/www/wwwroot/school-guide` 并解压。目录结构应为：
 
 ```
-/www/wwwroot/school-assistant/
+/www/wwwroot/school-guide/
 ├── backend/
 ├── frontend/dist/      ← 前端构建产物（必须包含）
 ├── requirements.txt
@@ -49,7 +49,7 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 ## 第 3 步：配置环境变量
 
 ```bash
-cd /www/wwwroot/school-assistant/deploy
+cd /www/wwwroot/school-guide/deploy
 cp .env.example .env
 vi .env    # 填入各家 API Key、模型名、Base URL 和数据库密码（与你本地 .env 一致）
 ```
@@ -57,7 +57,7 @@ vi .env    # 填入各家 API Key、模型名、Base URL 和数据库密码（�
 ## 第 4 步：构建并启动容器
 
 ```bash
-cd /www/wwwroot/school-assistant/deploy
+cd /www/wwwroot/school-guide/deploy
 docker compose up -d --build
 docker compose ps          # 三个服务都应是 running/healthy
 docker compose logs -f backend   # 跟踪日志，看到"知识库检索预热"即启动成功
@@ -70,7 +70,7 @@ docker compose logs -f backend   # 跟踪日志，看到"知识库检索预热"�
 首次部署需要灌入知识库（后端容器内执行）：
 
 ```bash
-cd /www/wwwroot/school-assistant/deploy
+cd /www/wwwroot/school-guide/deploy
 # 构建向量索引（读取 backend/data/raw 下的文档）
 docker compose exec backend python -m scripts.build_index
 # 导入结构化招生/录取数据
@@ -102,7 +102,7 @@ curl http://127.0.0.1:8000/docs    # 后端存活
 ## 日常维护命令
 
 ```bash
-cd /www/wwwroot/school-assistant/deploy
+cd /www/wwwroot/school-guide/deploy
 
 docker compose logs -f backend      # 查看后端日志
 docker compose restart backend      # 重启后端
@@ -119,6 +119,6 @@ docker compose exec db pg_dump -U school school > backup_$(date +%F).sql
 
 - **端口 8000 访问不到**：正常，后端只绑定 127.0.0.1，必须通过站点反代访问。
 - **流式回答变成一次性输出**：确认 nginx 中 `/chat` 的 `proxy_buffering off;` 已生效。
-- **构建时 torch 下载慢/巨大**：确认 Dockerfile 走的是 CPU 安装源；仍慢就给 Docker 配镜像加速。
+- **依赖下载较慢**：给 Docker 配置国内镜像加速，并确认 pip 使用可访问的镜像源。
 - **内存不足进程被杀**：确认已加 swap；构建镜像时最吃内存。
 - **数据库连接失败**：等 db 容器 healthy 后 backend 才会启动（compose 已配置），若仍失败看 `docker compose logs db`。

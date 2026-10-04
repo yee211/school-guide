@@ -1,10 +1,16 @@
 import type { ChatResponse, ChatSource, HistoryTurn } from '../types/chat'
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+
+function apiUrl(path: string): string {
+  return `${API_BASE_URL}${path}`
+}
+
 export async function askSchoolAssistant(
   message: string,
   history: HistoryTurn[] = [],
 ): Promise<ChatResponse> {
-  const response = await fetch('/chat', {
+  const response = await fetch(apiUrl('/chat'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history }),
@@ -31,7 +37,7 @@ export async function askSchoolAssistantStream(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<void> {
-  const response = await fetch('/chat/stream', {
+  const response = await fetch(apiUrl('/chat/stream'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, history }),

@@ -1,8 +1,6 @@
-# 校园智答 · School Introduction Assistant
+# School Guide · 校园智答
 
-面向长沙工业学院校园与招生场景的知识库问答项目，同时也是个人作品集网站中的在线项目。系统将招生录取等结构化问题交给 PostgreSQL 精确查询，将学校概况、校园生活和图书馆等开放性问题交给 RAG 检索，并通过 SSE 流式返回带来源的回答。
-
-**在线体验：** [tanzeng.xyz](https://tanzeng.xyz)
+面向长沙工业学院校园与招生场景的独立知识库问答项目。系统将招生录取等结构化问题交给 PostgreSQL 精确查询，将学校概况、校园生活和图书馆等开放性问题交给 RAG 检索，并通过 SSE 流式返回带来源的回答。
 
 > 本项目及其回答仅用于信息查询与技术展示。招生、收费及校园安排可能调整，重要信息请以学校官方最新通知为准。
 
@@ -36,7 +34,7 @@ FastAPI / QueryRouter
 LLM 生成回答 ──→ SSE 流式响应 + 资料来源
 ```
 
-知识库源文件位于 `backend/data/raw/`。录取分数和招生计划会进入结构化表，全部资料同时可进入向量与词法索引。上传新资料时使用增量索引，批量初始化和源文件整体更新时可运行全量同步脚本。
+知识库源文件位于 `backend/data/raw/`。录取分数和招生计划进入结构化表，其余资料进入向量与词法索引。上传新资料时使用增量索引，批量初始化和源文件整体更新时可运行全量同步脚本。
 
 ## 技术栈
 
@@ -86,7 +84,7 @@ npm install
 npm run dev
 ```
 
-Vite 默认运行于 `http://127.0.0.1:5173`，并将 `/chat` 与 `/knowledge` 代理到本地后端。
+Vite 默认运行于 `http://127.0.0.1:5173`，并将 `/chat` 与 `/knowledge` 代理到本地后端。跨域部署时可在 `frontend/.env` 设置 `VITE_API_BASE_URL`。
 
 ## API
 
@@ -105,6 +103,7 @@ npm run build
 
 cd ../backend
 python -m scripts.test_cleaner
+python -m scripts.test_import_crawled
 python -m scripts.test_metadata_filters
 python -m scripts.test_structured
 python -m scripts.evaluate_retrieval
@@ -137,7 +136,7 @@ backend/
 ├── evals/            # 检索评估用例
 └── scripts/          # 初始化、导入、测试和评估
 frontend/
-├── src/components/   # 作品集与校园问答组件
+├── src/components/   # 校园问答与知识导航组件
 ├── src/data/         # 知识模块和快捷问题配置
 └── src/services/     # Chat 与 SSE 客户端
 deploy/               # Docker Compose、Dockerfile、Nginx 配置与部署指南
@@ -147,4 +146,4 @@ deploy/               # Docker Compose、Dockerfile、Nginx 配置与部署指�
 
 仓库提供 Docker Compose 后端方案：PostgreSQL、Redis 和 FastAPI 运行于容器中，前端构建产物由 Nginx 提供，`/chat` 与 `/knowledge` 反向代理到仅监听本机的后端端口。
 
-完整步骤、Nginx SSE 配置、初始化和维护命令见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。
+完整步骤、Nginx SSE 配置、初始化和维护命令见 [`deploy/DEPLOY.md`](deploy/DEPLOY.md)。推荐将前端与 API 部署在同一站点，例如 `guide.tanzeng.xyz`。
