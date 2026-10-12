@@ -91,7 +91,7 @@ class StructuredQueryService:
 
     def get_catalog(self) -> FilterCatalog:
         version = self._data_version()
-        cache_key = f"structured:catalog:{version}"
+        cache_key = f"structured:v2:catalog:{version}"
         cached = redis_cache.get_json(cache_key) if ":None" not in cache_key else None
         if cached is not None:
             return self._catalog_from_dict(cached)
@@ -337,7 +337,7 @@ class StructuredQueryService:
             sort_keys=True,
         )
         digest = hashlib.md5(raw.encode("utf-8")).hexdigest()
-        return f"structured:query:{version}:{digest}"
+        return f"structured:v2:query:{version}:{digest}"
 
     def _query_db(
         self,

@@ -50,6 +50,15 @@ class BugRegressions(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertNotIn("| 专业 | 计划 |", chunks[-1].page_content)
 
+    def test_transactional_cache_does_not_reuse_legacy_namespace(self):
+        from app.structured.query import StructuredQueryService
+        from app.rag.metadata import RetrievalFilters
+        service = StructuredQueryService()
+        with patch.object(service, "_data_version", return_value=1):
+            key = service._cache_key(RetrievalFilters(years=("2026",)), None)
+        self.assertTrue(key.startswith("structured:v2:query:1:"))
+        self.assertFalse(key.startswith("structured:query:1:"))
+
     def test_policy_question_does_not_require_score_conditions(self):
         self.assertIsNone(admission_clarification("复读生能报吗"))
         self.assertIsNone(admission_clarification("专升本怎么报"))
