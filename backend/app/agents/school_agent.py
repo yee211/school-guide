@@ -1,7 +1,8 @@
+from app.agents.answer_requirements import Clarification
 from app.agents.query_router import QueryRouter
 from app.services.llm_service import llm_service
 from app.services.rag_service import RAGResult, SourceInfo
-from app.structured.query import query_admission_data
+from app.agents.retrieval_tools import RETRIEVAL_TOOLS
 
 
 class SchoolAgent:
@@ -13,12 +14,18 @@ class SchoolAgent:
 
     def __init__(self, router: QueryRouter | None = None) -> None:
         self._router = router or QueryRouter(
-            llm_tools=llm_service.intent_with_tools([query_admission_data]),
+            llm_tools=llm_service.intent_with_tools(RETRIEVAL_TOOLS),
+            coverage_checker=llm_service.coverage_checker(),
         )
 
     async def stream(self, message: str, history=None):
         """流式回答，逐段 yield ``{"type": "delta"|"done", ...}`` 事件。"""
         prepared = await self._router.prepare(message, history)
+
+        if isinstance(prepared, Clarification):
+            yield {"type": "delta", "content": prepared.answer}
+            yield {"type": "done", "sources": []}
+            return
 
         if prepared is None:
             yield {

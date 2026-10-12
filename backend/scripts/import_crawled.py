@@ -75,7 +75,7 @@ _MD_NOISE = re.compile(r"[#>*|\[\]()]")
 
 def _parse_article(path: Path) -> tuple[dict[str, str], str, str]:
     """拆出爬虫写入的元数据头、标题和正文。"""
-    raw = path.read_text(encoding="utf-8", errors="replace")
+    raw = path.read_text(encoding="utf-8-sig", errors="replace")
     lines = raw.splitlines()
 
     title = ""
@@ -129,7 +129,7 @@ def collect(src: Path) -> tuple[list[dict], list[dict], Counter]:
     image_only: list[dict] = []
     skipped = Counter()
 
-    for line in jsonl.read_text(encoding="utf-8").splitlines():
+    for line in jsonl.read_text(encoding="utf-8-sig").splitlines():
         if not line.strip():
             continue
         try:
@@ -260,6 +260,9 @@ def main() -> None:
         print("\n（dry-run，未写任何文件。确认无误后加 --apply）")
         return
 
+    filenames = [safe_filename(category).casefold() for category in by_category]
+    if len(filenames) != len(set(filenames)):
+        raise SystemExit("类目文件名存在冲突，未修改目标目录；请先调整类目名称")
     if TARGET_DIR.exists():
         shutil.rmtree(TARGET_DIR)
     TARGET_DIR.mkdir(parents=True)

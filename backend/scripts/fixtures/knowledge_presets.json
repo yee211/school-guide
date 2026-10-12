@@ -1,0 +1,246 @@
+[
+  {
+    "module": "overview",
+    "question": "请介绍一下长沙工业学院的基本情况",
+    "kind": "document",
+    "source": "backend/data/raw/school_overview.md",
+    "required_terms": [
+      "公办普通本科",
+      "应用型本科"
+    ]
+  },
+  {
+    "module": "overview",
+    "question": "长沙工业学院的历史沿革是怎样的？",
+    "kind": "document",
+    "source": "backend/data/raw/school_overview.md",
+    "required_terms": [
+      "历史沿革",
+      "2001",
+      "2024"
+    ]
+  },
+  {
+    "module": "overview",
+    "question": "学校的办学性质和应用型本科定位是什么？",
+    "kind": "document",
+    "source": "backend/data/raw/school_overview.md",
+    "required_terms": [
+      "办学性质",
+      "应用型本科"
+    ]
+  },
+  {
+    "module": "overview",
+    "question": "学校有哪些二级学院和教学机构？",
+    "kind": "document",
+    "source": "backend/data/raw/crawled/教学机构.md",
+    "required_terms": [
+      "电子信息工程学院",
+      "学院"
+    ]
+  },
+  {
+    "module": "majors",
+    "question": "计算机科学与技术专业的核心主干课程有哪些？",
+    "kind": "document",
+    "source": "backend/data/raw/crawled/计算机科学与技术.md",
+    "required_terms": [
+      "专业核心课",
+      "数据结构与算法"
+    ]
+  },
+  {
+    "module": "majors",
+    "question": "软件工程专业与哪些企业开展深度产教融合？",
+    "kind": "document",
+    "source": "backend/data/raw/crawled/软件工程.md",
+    "required_terms": [
+      "麒麟",
+      "华为",
+      "产教研合作"
+    ]
+  },
+  {
+    "module": "majors",
+    "question": "机械设计制造及其自动化专业有哪些核心课程？",
+    "kind": "document",
+    "source": "backend/data/raw/crawled/机械设计制造及其自动化.md",
+    "required_terms": [
+      "专业核心课",
+      "机械原理"
+    ]
+  },
+  {
+    "module": "majors",
+    "question": "机器人工程专业的专业概述与培养目标是什么？",
+    "kind": "document",
+    "source": "backend/data/raw/crawled/机器人工程.md",
+    "required_terms": [
+      "机器人系统设计",
+      "培养"
+    ]
+  },
+  {
+    "module": "admissions",
+    "question": "2025年湖南物理类计算机科学与技术专业的招生人数是多少？",
+    "kind": "structured",
+    "fields": [
+      "plan"
+    ]
+  },
+  {
+    "module": "admissions",
+    "question": "2025年湖南物理类软件工程专业的学费和学制是多少？",
+    "kind": "structured",
+    "fields": [
+      "tuition",
+      "duration"
+    ]
+  },
+  {
+    "module": "admissions",
+    "question": "2025年湖南物理类人工智能专业的招生人数和学费是多少？",
+    "kind": "structured",
+    "fields": [
+      "plan",
+      "tuition"
+    ]
+  },
+  {
+    "module": "admissions",
+    "question": "2025年湖南历史类会计学专业的招生人数和学费是多少？",
+    "kind": "structured",
+    "fields": [
+      "plan",
+      "tuition"
+    ]
+  },
+  {
+    "module": "scores",
+    "question": "2026年湖南历史类第102组的投档分和最低位次是多少？",
+    "kind": "structured",
+    "fields": [
+      "score",
+      "admission_rank"
+    ]
+  },
+  {
+    "module": "scores",
+    "question": "2026年湖南物理类第107组的投档分和最低位次是多少？",
+    "kind": "structured",
+    "fields": [
+      "score",
+      "admission_rank"
+    ]
+  },
+  {
+    "module": "scores",
+    "question": "2025年湖南物理类各专业组投档线是多少？",
+    "kind": "structured",
+    "fields": [
+      "score"
+    ],
+    "expected_groups": [
+      "物理103组",
+      "物理104组",
+      "物理105组",
+      "物理106组",
+      "物理107组",
+      "物理108组"
+    ]
+  },
+  {
+    "module": "scores",
+    "question": "2025年湖南历史类第102组的投档线是多少？",
+    "kind": "structured",
+    "fields": [
+      "score"
+    ]
+  },
+  {
+    "module": "life",
+    "question": "学校宿舍是几人间，有哪些设施？",
+    "kind": "document",
+    "source": "backend/data/raw/school_life.txt",
+    "required_terms": [
+      "四人间",
+      "独立卫浴"
+    ]
+  },
+  {
+    "module": "life",
+    "question": "学校食堂和快递站在哪里？",
+    "kind": "document",
+    "source": "backend/data/raw/school_life.txt",
+    "required_terms": [
+      "食堂",
+      "菜鸟驿站",
+      "12栋"
+    ]
+  },
+  {
+    "module": "life",
+    "question": "学校宿舍的校园网和用电情况怎么样？",
+    "kind": "document",
+    "source": "backend/data/raw/school_life.txt",
+    "required_terms": [
+      "网口",
+      "不断电不断网"
+    ]
+  },
+  {
+    "module": "life",
+    "question": "从长沙火车南站到学校怎么走？",
+    "kind": "document",
+    "source": "backend/data/raw/school_life.txt",
+    "required_terms": [
+      "长沙火车南站",
+      "4号线",
+      "罐子岭",
+      "打车"
+    ]
+  },
+  {
+    "module": "library",
+    "question": "学校图书馆的开放时间和自习条件怎么样？",
+    "kind": "document",
+    "source": "backend/data/raw/library.md",
+    "required_terms": [
+      "08:30",
+      "21:30",
+      "插座"
+    ]
+  },
+  {
+    "module": "library",
+    "question": "学生最多能借几本书，借期多长？",
+    "kind": "document",
+    "source": "backend/data/raw/library.md",
+    "required_terms": [
+      "学生",
+      "5册",
+      "60天"
+    ]
+  },
+  {
+    "module": "library",
+    "question": "如何使用图书馆自助借还机？",
+    "kind": "document",
+    "source": "backend/data/raw/library.md",
+    "required_terms": [
+      "自助借还机使用说明",
+      "归还"
+    ]
+  },
+  {
+    "module": "library",
+    "question": "如何使用学校的超星移动图书馆？",
+    "kind": "document",
+    "source": "backend/data/raw/library.md",
+    "required_terms": [
+      "学习通",
+      "hunancsgy"
+    ]
+  }
+]

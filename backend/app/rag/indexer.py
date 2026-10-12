@@ -125,6 +125,7 @@ def build_chunk_id(document: Document) -> str:
             json.dumps(
                 {
                     "years": metadata.get("years", []),
+                    "groups": metadata.get("groups", []),
                     "subject_categories": metadata.get(
                         "subject_categories",
                         [],

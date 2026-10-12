@@ -35,7 +35,7 @@ GROUP_MAX = "专业组最高分"
 
 
 def _parse_int(cell: str) -> int | None:
-    cell = strip_markdown_bold(cell or "").strip()
+    cell = strip_markdown_bold(cell or "").strip().replace(",", "").replace("，", "")
     if cell in _EMPTY:
         return None
     match = re.search(r"(\d+)", cell)
@@ -229,6 +229,8 @@ def _parse_summary_province(
     score_rows: list[dict] = []
 
     for row in filled:
+        if len(row) < 6:
+            continue
         subject = normalize_subject(strip_markdown_bold(row[0]))
         group_no = normalize_group(strip_markdown_bold(row[1]), subject)
         major = normalize_major(strip_markdown_bold(row[2]))
@@ -288,6 +290,8 @@ def _parse_summary_outprovince(
     score_rows: list[dict] = []
 
     for row in filled:
+        if len(row) < 7:
+            continue
         province = normalize_province(strip_markdown_bold(row[0]))
         subject = normalize_subject(strip_markdown_bold(row[1]))
         major = normalize_major(strip_markdown_bold(row[2]))
@@ -347,47 +351,34 @@ def _parse_control_lines(
     content: str,
     source_file: str,
 ) -> tuple[list[dict], list[dict]]:
-    """2026 控制线表（两行 header），列：类别0/历史文化1/历史专业2/物理文化3/物理专业4。"""
+    """Locate ordinary-category control lines by semantic headers, never sports columns."""
     score_rows: list[dict] = []
+    columns: dict[str, int] = {}
     for line in content.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
+        if not line.strip().startswith("|"):
             continue
-        cells = [strip_markdown_bold(c.strip()) for c in line.strip("|").split("|")]
-        if not cells or cells[0] in {"专业类别", "项目", ""}:
+        cells = [strip_markdown_bold(c.strip()) for c in line.strip().strip("|").split("|")]
+        if any("历史类" in c or "物理类" in c for c in cells):
+            columns = {
+                subject: index
+                for index, cell in enumerate(cells)
+                for subject in ("历史类", "物理类")
+                if subject in cell and "普通类" in cell and "专业）" not in cell
+            }
             continue
-        if re.fullmatch(r":?-{3,}:?", cells[0] or ""):
+        if not columns or not cells or not re.search("本科|专科", cells[0]):
             continue
-        batch = cells[0]
-        if len(cells) >= 5:
-            hist = parse_score_rank(cells[1])[0]
-            phys = parse_score_rank(cells[3])[0]
-            if hist is not None:
-                score_rows.append(
-                    _score_row(
-                        year=2026,
-                        province="湖南省",
-                        subject_category="历史类",
-                        score_type="控制线",
-                        score=hist,
-                        admission_rank=None,
-                        batch=batch,
-                        source_file=source_file,
-                    )
-                )
-            if phys is not None:
-                score_rows.append(
-                    _score_row(
-                        year=2026,
-                        province="湖南省",
-                        subject_category="物理类",
-                        score_type="控制线",
-                        score=phys,
-                        admission_rank=None,
-                        batch=batch,
-                        source_file=source_file,
-                    )
-                )
+        for subject, index in columns.items():
+            if index >= len(cells):
+                continue
+            score, _ = parse_score_rank(cells[index])
+            if score is not None:
+                score_rows.append(_score_row(
+                    year=2026, province="湖南省", subject_category=subject,
+                    score_type="控制线", score=score, admission_rank=None,
+                    batch=cells[0], source_file=source_file,
+                ))
+
     return score_rows, []
 
 
@@ -503,7 +494,7 @@ def _parse_sectioned_plan(
 
     current_group: str | None = None
     for row in rows:
-        if len(row) < 2:
+        if len(row) < 5:
             continue
         cell0 = strip_markdown_bold(row[0])
         cell1 = strip_markdown_bold(row[1])
@@ -565,11 +556,9 @@ def _parse_cross_plan_table(
         return [], []
 
     plan_rows: list[dict] = []
-    triples = transpose_cross_table(header, rows)
 
     # 科类状态机：重新按行序判定专业行的科类
     current_subject = "历史类"
-    subject_by_major: dict[str, str] = {}
     for row in rows:
         if not row:
             continue
@@ -582,21 +571,11 @@ def _parse_cross_plan_table(
             continue
         if any(k in cell0 for k in ("合计", "总计", "★", "△", "⊕")):
             continue
-        if cell0:
-            subject_by_major[cell0] = current_subject
-
-    for major_raw, province, plan in triples:
-        subject = subject_by_major.get(major_raw, "")
-        plan_rows.append(
-            _plan_row(
-                year=year,
-                province=province,
-                subject_category=subject,
-                plan=plan,
-                major=normalize_major(major_raw),
-                source_file=source_file,
-            )
-        )
+        for major_raw, province, plan in transpose_cross_table(header, [row]):
+            plan_rows.append(_plan_row(
+                year=year, province=province, subject_category=current_subject,
+                plan=plan, major=normalize_major(major_raw), source_file=source_file,
+            ))
 
     return [], plan_rows
 

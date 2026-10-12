@@ -53,6 +53,19 @@ def load_uploaded_documents(
     text: str = ""
     title: str | None = None
 
+    if suffix in {".txt", ".md", ".csv"}:
+        for encoding in ("utf-8-sig", "gb18030"):
+            try:
+                text = content.decode(encoding).strip()
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            raise ValueError("文档编码无法识别")
+        if not text:
+            raise ValueError("文件中没有可索引的有效文本内容")
+        return [Document(page_content=text, metadata=_build_metadata(filename))]
+
     try:
         with _CONVERSION_LOCK:
             converter = _get_converter()

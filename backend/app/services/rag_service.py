@@ -92,7 +92,7 @@ class RAGService:
 
         recent = history[-4:] if len(history) > 4 else history
         conv_text = "\n".join(
-            f"{item.role}: {item.content}" for item in recent
+            f"{item.role}: {item.content[:RAGService.MAX_HISTORY_CONTENT_CHARS]}" for item in recent
         )
         prompt = [
             SystemMessage(
@@ -122,9 +122,12 @@ class RAGService:
         self,
         question: str,
         history=None,
+        *,
+        search_query: str | None = None,
     ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
         """检索并组装生成所需的消息与来源；无相关片段时返回 None。"""
-        search_query = await self.contextualize_query(question, history)
+        if search_query is None:
+            search_query = await self.contextualize_query(question, history)
         documents = await retriever_service.search(
             query=search_query,
             top_k=5,

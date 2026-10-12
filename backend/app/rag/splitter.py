@@ -1,4 +1,5 @@
 import re
+from bisect import bisect_right
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -115,6 +116,32 @@ def split_documents(
     chunks: list[Document] = []
     for document in cleaned_documents:
         document_chunks = text_splitter.split_documents([document])
+        # Scan each source once; binary search the context at each chunk position.
+        heading_offsets, heading_values = [], []
+        active = {}
+        for match in re.finditer(r"(?m)^(#{1,6})\s+.+$", document.page_content):
+            level = len(match.group(1))
+            active = {key: value for key, value in active.items() if key < level}
+            active[level] = match.group(0).strip()
+            heading_offsets.append(match.start())
+            heading_values.append("\n".join(active[key] for key in sorted(active)))
+        table_offsets, table_values = [], []
+        lines = document.page_content.splitlines(keepends=True)
+        offset = 0
+        in_table = False
+        for index, line in enumerate(lines):
+            if line.strip().startswith("|") and index + 1 < len(lines) and _TABLE_SEPARATOR_PATTERN.fullmatch(lines[index + 1].strip()):
+                table_offsets.append(offset)
+                table_values.append(f"{line.strip()}\n{lines[index + 1].strip()}")
+                in_table = True
+            elif in_table and not line.strip().startswith("|"):
+                table_offsets.append(offset)
+                table_values.append(None)
+                in_table = False
+            offset += len(line)
+        def context_at(offsets, values, position):
+            index = bisect_right(offsets, position) - 1
+            return values[index] if index >= 0 else None
 
 
         for chunk in document_chunks:
@@ -127,14 +154,8 @@ def split_documents(
                 enrich_document_metadata(
                     _add_context(
                         chunk,
-                        heading=_heading_context(
-                            document.page_content,
-                            start_index,
-                        ),
-                        table_header=_table_header_before(
-                            document.page_content,
-                            start_index,
-                        ),
+                        heading=context_at(heading_offsets, heading_values, start_index),
+                        table_header=context_at(table_offsets, table_values, start_index),
                     )
                 )
             )

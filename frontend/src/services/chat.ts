@@ -53,29 +53,29 @@ export async function askSchoolAssistantStream(
   const decoder = new TextDecoder()
   let buffer = ''
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const payload = line.slice(6)
-      try {
-        const event = JSON.parse(payload)
-        if (event.type === 'delta') {
-          callbacks.onDelta(event.content)
-        } else if (event.type === 'done') {
-          callbacks.onDone(event.sources ?? [])
-        } else if (event.type === 'error') {
-          callbacks.onError(event.message ?? '服务异常，请稍后重试')
-        }
-      } catch {
-        // 忽略无法解析的行
+  let terminal = false
+  function dispatch(line: string) {
+    if (!line.startsWith('data:')) return
+    let event
+    try { event = JSON.parse(line.slice(5).trim()) } catch { return }
+    if (event.type === 'delta') callbacks.onDelta(event.content)
+    else if (event.type === 'done') { terminal = true; callbacks.onDone(event.sources ?? []) }
+    else if (event.type === 'error') { terminal = true; callbacks.onError(event.message ?? '服务异常，请稍后重试') }
+  }
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+      for (const line of lines) dispatch(line)
+      if (done) {
+        if (buffer.trim()) dispatch(buffer)
+        break
       }
     }
+    if (!terminal && !signal?.aborted) callbacks.onError('连接中断')
+  } finally {
+    reader.releaseLock()
   }
 }

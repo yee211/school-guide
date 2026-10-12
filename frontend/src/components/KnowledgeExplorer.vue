@@ -7,8 +7,19 @@ defineEmits<{
   select: [id: KnowledgeModuleId]
   ask: [question: string]
   resume: []
+  preview: [source: string]
 }>()
 const activeModule = computed(() => knowledgeModules.find((item) => item.id === props.activeId) ?? knowledgeModules[0])
+
+function sourceTitle(source: string): string {
+  const filename = source.split('/').pop() ?? source
+  const titles: Record<string, string> = {
+    'school_overview.md': '学校概况',
+    'school_life.txt': '校园生活',
+    'library.md': '图书馆服务',
+  }
+  return titles[filename] ?? filename.replace(/\.[^.]+$/, '')
+}
 </script>
 
 <template>
@@ -31,7 +42,7 @@ const activeModule = computed(() => knowledgeModules.find((item) => item.id === 
     <p class="knowledge-hint">{{ disabled ? '正在回答中，请返回对话查看或停止生成。' : '点击问题即可提问，也可以在下方输入具体问题。' }}</p>
     <details class="knowledge-sources">
       <summary>本模块资料（{{ activeModule.sources.length }} 份）</summary>
-      <ul><li v-for="source in activeModule.sources" :key="source">{{ source }}</li></ul>
+      <ul><li v-for="source in activeModule.sources" :key="source" :title="source"><button type="button" class="source-link" @click="$emit('preview', source)">{{ sourceTitle(source) }}</button><br /><small>{{ source }}</small></li></ul>
     </details>
     <button v-if="hasConversation" class="resume-chat" type="button" @click="$emit('resume')">返回当前对话</button>
   </section>

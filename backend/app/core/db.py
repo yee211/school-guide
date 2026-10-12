@@ -49,9 +49,11 @@ def get_pool() -> ConnectionPool:
 
 
 @contextmanager
-def connect() -> Iterator[psycopg.Connection]:
+def connect(*, statement_timeout_ms: int = 10000) -> Iterator[psycopg.Connection]:
     """获取连接池中的可用连接，离开上下文时自动归还池中。"""
     pool = get_pool()
     with pool.connection() as connection:
+        connection.execute("SELECT set_config('statement_timeout', %s, true)", (str(statement_timeout_ms),))
+        connection.execute("SET LOCAL lock_timeout = '3s'")
         yield connection
 

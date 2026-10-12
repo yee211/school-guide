@@ -28,7 +28,7 @@ _PAGE_NUMBER_PATTERNS = (
     # Page 1 / Page 1 of 10 / Page 1/10
     re.compile(r"(?m)^\s*Page\s+\d+(?:\s*(?:of|/)\s*\d+)?\s*$", re.IGNORECASE),
     # 纯孤立数字行（多见于 PDF 底部页码）
-    re.compile(r"(?m)^\s*\d+\s*$"),
+
 )
 
 # 中文句子结尾正常标点符号集合
@@ -150,7 +150,7 @@ class DocumentCleaner:
         text = cls.remove_page_numbers(text)
         text = cls.clean_markdown_tables(text)
         text = cls.clean_empty_headings(text)
-        text = cls.fix_chinese_linebreaks(text)
+        # Preserve semantic line boundaries: plain headings and route steps are not OCR wraps.
         text = cls.normalize_whitespace(text)
         return text
 

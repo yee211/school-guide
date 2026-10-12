@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import re
 
 from langchain_core.messages import (
     AIMessage,
@@ -8,26 +10,28 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from app.agents.answer_requirements import Clarification, admission_clarification, normalize_years
+from app.agents.agentic_rag import AgenticRAG
 from app.prompts.school_prompt import SCHOOL_SYSTEM_PROMPT
 from app.rag.metadata import infer_retrieval_filters
 from app.services.rag_service import SourceInfo, rag_service
-from app.structured.query import query_admission_data, structured_query_service
+from app.structured.query import structured_query_service
+
+
+logger = logging.getLogger(__name__)
 
 
 class QueryRouter:
     """根据消息+历史决定走结构化查询还是 RAG，并组装生成所需的消息与来源。
 
-    三条互斥分支（按优先级）：
-    1. 规则快通道：消息自包含结构化问题 → 直接查库，跳过意图 LLM
-    2. 意图 LLM：模型决定是否调用 query_admission_data
-    3. RAG 兜底：开放性问答
+    简单精确问题走规则快通道，其他问题进入有预算的工具检索循环。
 
     对外入口 prepare 返回 ``(gen_messages, sources)``；返回 None 表示无内容可答。
     """
 
-    def __init__(self, llm_tools) -> None:
-        # 由 SchoolAgent 注入已绑定工具的意图 LLM
-        self._llm_tools = llm_tools
+    def __init__(self, llm_tools, coverage_checker=None) -> None:
+        # 由 SchoolAgent 注入绑定两类检索工具的规划模型
+        self._agentic_rag = AgenticRAG(llm_tools, coverage_checker=coverage_checker)
 
     MAX_HISTORY_MESSAGES = 8  # 最多保留最近 4 轮问答（8 条消息）
     MAX_HISTORY_CONTENT_CHARS = 1000  # 历史单条消息内容截断保护
@@ -56,14 +60,29 @@ class QueryRouter:
         return messages
 
     @staticmethod
+    def _requires_narrative(message: str) -> bool:
+        return bool(re.search(
+            r"比较|对比|区别|推荐|就业|特色|课程|培养|前景|师资|宿舍|住宿|校园|优势|怎么样|如何|介绍|政策|设施|环境|地址|电话|联系|交通|图书|食堂|位置|办学|面积",
+            message,
+        ))
+
+    @staticmethod
     async def _fast_structured_question(message: str) -> str | None:
         """规则快通道：消息本身已是自包含的结构化问题（专业/专业组 + 分数/计划关键词）。
 
         只有同时命中「专业或专业组」且「录取分数/招生计划」关键词才触发，直接返回查询串；
-        否则（含「湖南」这类需合并上一轮上下文的补充追问、缩写专业）返回 None，交给意图 LLM。
+        混合问题或条件不足时返回 None，进入检索 Agent。
         """
-        catalog = await asyncio.to_thread(structured_query_service.get_catalog)
+        # Mixed questions must retrieve narrative evidence as well as exact rows.
+        if QueryRouter._requires_narrative(message):
+            return None
+        catalog = await asyncio.wait_for(asyncio.to_thread(structured_query_service.get_catalog), timeout=10.0)
         filters = infer_retrieval_filters(message, catalog)
+        remainder = message
+        for major in filters.majors:
+            remainder = remainder.replace(major, "")
+        if len(filters.majors) > 1 or re.search(r"和|及|同时|另外|还有|并且|分别|与|、", remainder):
+            return None
         targeted = bool(
             filters.majors
             or filters.groups
@@ -111,12 +130,22 @@ class QueryRouter:
         self,
         message: str,
         history,
+        search_query: str | None = None,
     ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
         """快通道命中时合成 AIMessage+ToolMessage，复用与工具调用一致的生成格式。"""
         tool_call_id = "fast_structured"
-        tool_result = await self._structured_tool_result(message, tool_call_id)
+        try:
+            tool_result = await asyncio.wait_for(
+                self._structured_tool_result(search_query or message, tool_call_id),
+                timeout=10.0,
+            )
+        except Exception:
+            logger.warning("Fast structured query failed; entering retrieval agent", exc_info=True)
+            tool_result = None
         if tool_result is None:
-            return await rag_service.prepare(message, history)
+            return await self._agentic_rag.prepare(
+                message, history, search_query=search_query or message
+            )
 
         tool_message, sources = tool_result
         base_messages: list[BaseMessage] = [
@@ -128,7 +157,7 @@ class QueryRouter:
                 tool_calls=[
                     {
                         "name": "query_admission_data",
-                        "args": {"question": message},
+                        "args": {"question": search_query or message},
                         "id": tool_call_id,
                         "type": "tool_call",
                     }
@@ -138,74 +167,34 @@ class QueryRouter:
         ]
         return base_messages, sources
 
-    async def _prepare_generation(
-        self,
-        message: str,
-        history,
-        response,
-    ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
-        """准备最终生成的 messages 与来源；返回 None 表示无内容可答。"""
-        if not response.tool_calls:
-            return await rag_service.prepare(message, history)
-
-        base_messages: list[BaseMessage] = [
-            SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
-            *self._history_to_messages(history),
-            HumanMessage(content=message),
-            response,
-        ]
-        sources: list[SourceInfo] = []
-
-        for tool_call in response.tool_calls:
-            if tool_call["name"] != "query_admission_data":
-                continue
-            question = tool_call.get("args", {}).get("question") or message
-            tool_result = await self._structured_tool_result(
-                question,
-                tool_call["id"],
-            )
-            if tool_result is None:
-                return await rag_service.prepare(message, history)
-            base_messages.append(tool_result[0])
-            sources.extend(tool_result[1])
-
-        return base_messages, sources
-
     async def prepare(
         self,
         message: str,
         history=None,
-    ) -> tuple[list[BaseMessage], list[SourceInfo]] | None:
+    ) -> tuple[list[BaseMessage], list[SourceInfo]] | Clarification | None:
         """路由并组装生成所需的消息与来源；返回 None 表示无内容可答。"""
-        # 1. 优先检查当前提问是否直接命中规则快通道
-        if await self._fast_structured_question(message) is not None:
-            return await self._fast_structured_messages(message, history)
-
-        # 2. 如果存在对话历史，尝试结合历史上下文改写后再检查快通道
+        search_query = normalize_years(message.strip())
+        # Clarification must use the resolved current question, not arbitrary old history.
         if history:
-            rewritten_query = await rag_service.contextualize_query(message, history)
-            if (
-                rewritten_query != message
-                and await self._fast_structured_question(rewritten_query) is not None
-            ):
-                return await self._fast_structured_messages(rewritten_query, history)
+            try:
+                search_query = normalize_years(await asyncio.wait_for(
+                    rag_service.contextualize_query(message, history), timeout=6.0
+                ))
+            except TimeoutError:
+                logger.warning("Query rewriting timed out; retaining original question")
+        clarification = admission_clarification(search_query)
+        if clarification:
+            return clarification
+        async def fast_query(query):
+            try:
+                return await self._fast_structured_question(query)
+            except Exception:
+                logger.warning("Fast structured routing unavailable", exc_info=True)
+                return None
 
-        messages: list[BaseMessage] = [
-            SystemMessage(content=SCHOOL_SYSTEM_PROMPT),
-            *self._history_to_messages(history),
-            HumanMessage(content=message),
-        ]
-        try:
-            response = await asyncio.wait_for(
-                self._llm_tools.ainvoke(messages),
-                timeout=6.0,
-            )
-            return await self._prepare_generation(message, history, response)
-        except Exception as exc:
-            logger.warning(
-                "Intent LLM invocation failed or timed out (%s), falling back to RAG",
-                exc,
-            )
-            return await rag_service.prepare(message, history)
+        if not self._requires_narrative(message) and await fast_query(search_query) is not None:
+            return await self._fast_structured_messages(message, history, search_query=search_query)
 
-
+        return await self._agentic_rag.prepare(
+            message, history, search_query=search_query
+        )

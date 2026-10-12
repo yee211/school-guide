@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 
 import openai
@@ -177,9 +177,11 @@ class RetrieverService:
             )
             return results, (perf_counter() - started) * 1000
 
+        # Document type is a ranking hint; explicit admission conditions remain hard filters.
+        lexical_filters = replace(filters, document_types=())
         semantic_timed, lexical_timed = await asyncio.gather(
             timed_semantic_search(filters),
-            timed_lexical_search(filters),
+            timed_lexical_search(lexical_filters),
         )
         semantic_results, semantic_ms = semantic_timed
         lexical_results, lexical_ms = lexical_timed

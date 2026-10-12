@@ -20,7 +20,7 @@ _SUBJECT_SHORT = {
 }
 
 _GROUP_PREFIX_PATTERN = re.compile(r"(物理|历史|艺术)")
-_GROUP_NUM_PATTERN = re.compile(r"(\d{3})")
+_GROUP_NUM_PATTERN = re.compile(r"(?<!\d)(\d{2,4})(?!\d)")
 
 _EMPTY_CELLS = {"", "/", "-", "—", "－", "–", "--"}
 
@@ -43,7 +43,7 @@ def normalize_province(raw: str) -> str | None:
         return None
     if raw in PROVINCE_ALIASES:
         return PROVINCE_ALIASES[raw]
-    if raw.endswith(("省", "自治区", "特别行政区")):
+    if raw.endswith(("省", "自治区", "特别行政区", "市")):
         return raw
     return None
 
@@ -88,6 +88,7 @@ def parse_score_rank(cell: str) -> tuple[float | None, int | None]:
     if cell in _EMPTY_CELLS:
         return None, None
 
+    cell = cell.replace(",", "").replace("，", "")
     score_match = re.search(r"(\d+(?:\.\d+)?)", cell)
     score = float(score_match.group(1)) if score_match else None
 
@@ -96,4 +97,6 @@ def parse_score_rank(cell: str) -> tuple[float | None, int | None]:
     )
     rank = int(rank_match.group(1)) if rank_match else None
 
+    if score is not None and (score > 750 or re.match(r"^位\s*次", cell)):
+        return None, rank if rank is not None else int(score)
     return score, rank

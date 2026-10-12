@@ -176,6 +176,8 @@ def reload(
 ) -> tuple[int, int]:
     """全量重建两张表（单事务 DELETE + INSERT，幂等且自动去重）。"""
     # 防御：跳过科类为空的脏行并按自然主键去重，避免 Markdown 格式重复行触发唯一键冲突
+    if any(row.get("score") is not None and not 0 <= float(row["score"]) <= 750 for row in score_rows):
+        raise ValueError("录取分数必须在 0–750 范围内，未更新数据")
     unique_scores: dict[tuple, dict] = {}
     for row in score_rows:
         if row.get("subject_category") and row.get("score") is not None:
@@ -188,8 +190,10 @@ def reload(
             unique_plans[_plan_key(row)] = row
     dedup_plans = list(unique_plans.values())
 
-    with connect() as connection:
+    with connect(statement_timeout_ms=60000) as connection:
         _ensure_schema(connection)
+        connection.execute("CREATE TABLE IF NOT EXISTS public.school_structured_version (id integer PRIMARY KEY CHECK (id = 1), version bigint NOT NULL)")
+        connection.execute("INSERT INTO public.school_structured_version VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET version = school_structured_version.version + 1")
 
         connection.execute("DELETE FROM public.school_admission_scores")
         connection.execute("DELETE FROM public.school_admission_plans")

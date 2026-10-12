@@ -1,3 +1,4 @@
+name: school-guide
 services:
   db:
     image: pgvector/pgvector:pg16

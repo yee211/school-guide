@@ -4,10 +4,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 
 from langchain_core.tools import tool
 from psycopg import sql
+from psycopg.errors import UndefinedTable
 
 from app.core.redis_cache import redis_cache
 from app.rag.metadata import (
@@ -39,8 +41,8 @@ class StructuredResult:
         if self.score_rows:
             lines = [
                 "【录取分数 / 投档线】",
-                "| 年份 | 省份 | 科类 | 专业组 | 专业 | 类型 | 分数 | 位次 | 来源 |",
-                "|---|---|---|---|---|---|---|---|---|",
+                "| 年份 | 省份 | 科类 | 专业组 | 专业 | 类型 | 分数 | 位次 | 批次 | 来源 |",
+                "|---|---|---|---|---|---|---|---|---|---|",
             ]
             for row in self.score_rows:
                 major = row["major"] or "（组）"
@@ -49,15 +51,15 @@ class StructuredResult:
                 lines.append(
                     f"| {row['year']} | {row['province']} | {row['subject_category']} "
                     f"| {row['group_no'] or ''} | {major} | {row['score_type']} "
-                    f"| {row['score']} | {rank} | {src} |"
+                    f"| {row['score']} | {rank} | {row.get('batch') or ''} | {src} |"
                 )
             parts.append("\n".join(lines))
 
         if self.plan_rows:
             lines = [
                 "【招生计划】",
-                "| 年份 | 省份 | 科类 | 专业组 | 专业 | 计划数 | 学费 | 学制 | 来源 |",
-                "|---|---|---|---|---|---|---|---|---|",
+                "| 年份 | 省份 | 科类 | 专业组 | 专业 | 计划数 | 学费 | 学制 | 选科要求 | 批次 | 来源 |",
+                "|---|---|---|---|---|---|---|---|---|---|---|",
             ]
             for row in self.plan_rows:
                 major = row["major"] or "（组）"
@@ -67,7 +69,7 @@ class StructuredResult:
                 lines.append(
                     f"| {row['year']} | {row['province']} | {row['subject_category']} "
                     f"| {row['group_no'] or ''} | {major} | {row['plan']} "
-                    f"| {tuition} | {duration} | {src} |"
+                    f"| {tuition} | {duration} | {row.get('subject_requirement') or ''} | {row.get('batch') or ''} | {src} |"
                 )
             parts.append("\n".join(lines))
 
@@ -77,15 +79,29 @@ class StructuredResult:
 
 
 class StructuredQueryService:
+    @staticmethod
+    def _data_version():
+        # The version is committed atomically with rows; Redis is only a value cache.
+        try:
+            with connect() as connection:
+                row = connection.execute("SELECT version FROM public.school_structured_version WHERE id = 1").fetchone()
+            return row["version"] if row else None
+        except UndefinedTable:
+            return None
+
     def get_catalog(self) -> FilterCatalog:
-        version = redis_cache.get_version()
+        version = self._data_version()
         cache_key = f"structured:catalog:{version}"
-        cached = redis_cache.get_json(cache_key)
+        cached = redis_cache.get_json(cache_key) if ":None" not in cache_key else None
         if cached is not None:
             return self._catalog_from_dict(cached)
 
-        catalog = self._load_catalog()
-        redis_cache.set_json(cache_key, self._catalog_to_dict(catalog))
+        try:
+            catalog = self._load_catalog()
+        except UndefinedTable:
+            return FilterCatalog()
+        if version is not None:
+            redis_cache.set_json(cache_key, self._catalog_to_dict(catalog))
         return catalog
 
     def _load_catalog(self) -> FilterCatalog:
@@ -150,6 +166,11 @@ class StructuredQueryService:
     def _infer_score_type(question: str) -> tuple[str, ...] | None:
         # 每个口径都要同时覆盖专业级和组级两种标签，否则问「2026 计算机最低
         # 分」会因为 2026 只有专业组投档线而查空。
+        group_query = bool(re.search(r"专业组|第\d+组|各组", question))
+        if group_query and "最高" in question:
+            return (GROUP_MAX,)
+        if group_query and ("投档" in question or "最低" in question):
+            return (GROUP_FLOOR,)
         if "最高" in question:
             return ("最高分", GROUP_MAX)
         if "控制线" in question:
@@ -280,7 +301,7 @@ class StructuredQueryService:
 
 
         cache_key = self._cache_key(filters, score_type)
-        cached = redis_cache.get_json(cache_key)
+        cached = redis_cache.get_json(cache_key) if ":None" not in cache_key else None
         if cached is not None:
             return StructuredResult(
                 score_rows=[self._coerce_score_row(r) for r in cached.get("score_rows", [])],
@@ -289,15 +310,19 @@ class StructuredQueryService:
                 is_targeted=True,
             )
 
-        result = self._query_db(filters, score_type)
-        redis_cache.set_json(
-            cache_key,
-            {
-                "score_rows": result.score_rows,
-                "plan_rows": result.plan_rows,
-                "source_files": list(result.source_files),
-            },
-        )
+        try:
+            result = self._query_db(filters, score_type)
+        except UndefinedTable:
+            return StructuredResult(is_targeted=is_targeted)
+        if ":None" not in cache_key:
+            redis_cache.set_json(
+                cache_key,
+                {
+                    "score_rows": result.score_rows,
+                    "plan_rows": result.plan_rows,
+                    "source_files": list(result.source_files),
+                },
+            )
         return result
 
     def _cache_key(
@@ -305,7 +330,7 @@ class StructuredQueryService:
         filters: RetrievalFilters,
         score_type: tuple[str, ...] | None,
     ) -> str:
-        version = redis_cache.get_version()
+        version = self._data_version()
         raw = json.dumps(
             {"filters": filters.as_dict(), "score_type": score_type},
             ensure_ascii=False,

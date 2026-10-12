@@ -19,6 +19,7 @@ import DOMPurify from 'dompurify'
 import { askSchoolAssistantStream } from '../services/chat'
 import type { ChatMessage, HistoryTurn } from '../types/chat'
 import KnowledgeExplorer from './KnowledgeExplorer.vue'
+import SourcePreview from './SourcePreview.vue'
 import { knowledgeModules, type KnowledgeModuleId } from '../data/knowledgeModules'
 
 defineOptions({ name: 'SchoolAssistant' })
@@ -28,13 +29,19 @@ marked.setOptions({
   breaks: true,
 })
 
+const markdownCache = new Map<string, string>()
 function renderMarkdown(content: string): string {
   if (!content) return ''
+  const cached = markdownCache.get(content)
+  if (cached !== undefined) return cached
   try {
     const rawHtml = marked.parse(content) as string
-    return DOMPurify.sanitize(rawHtml)
+    const html = DOMPurify.sanitize(rawHtml)
+    if (markdownCache.size >= 100) markdownCache.clear()
+    markdownCache.set(content, html)
+    return html
   } catch {
-    return content
+    return DOMPurify.sanitize(content)
   }
 }
 
@@ -58,6 +65,7 @@ const activeModuleId = ref<KnowledgeModuleId>('overview')
 const browsingKnowledge = ref(false)
 const hasConversation = computed(() => messages.value.some((message) => !message.localOnly))
 const showKnowledge = computed(() => browsingKnowledge.value || !hasConversation.value)
+const previewSource = ref<string | null>(null)
 const input = ref('')
 const loading = ref(false)
 const mobileMenuOpen = ref(false)
@@ -76,8 +84,8 @@ onMounted(() => {
     if (saved) {
       const parsed = JSON.parse(saved) as ChatMessage[]
       if (Array.isArray(parsed) && parsed.length > 0) {
-        messages.value = parsed
-        id = Math.max(...parsed.map((m) => m.id), 0)
+        messages.value = parsed.filter((m) => m && ['user', 'assistant'].includes(m.role) && typeof m.content === 'string').map((m, index) => ({ ...m, id: index + 1 }))
+        id = messages.value.length
         scrollToBottom()
       }
     }
@@ -86,14 +94,18 @@ onMounted(() => {
   }
 })
 
+let persistTimer: number | undefined
+function persistMessages() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages.value)) } catch { /* storage unavailable */ }
+}
 watch(
   messages,
-  (newMessages) => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(newMessages))
-    } catch {
-      // ignore
-    }
+  () => {
+    if (persistTimer !== undefined) return
+    persistTimer = window.setTimeout(() => {
+      persistTimer = undefined
+      persistMessages()
+    }, 250)
   },
   { deep: true },
 )
@@ -113,6 +125,8 @@ function resumeConversation() {
 onUnmounted(() => {
   stopGeneration()
   if (copyTimer) clearTimeout(copyTimer)
+  if (persistTimer !== undefined) clearTimeout(persistTimer)
+  persistMessages()
 })
 
 function scrollToBottom() {
@@ -133,6 +147,9 @@ function stopGeneration() {
   if (abortController.value) {
     abortController.value.abort()
     abortController.value = null
+    if (messages.value[messages.value.length - 1]?.role === 'user') {
+      messages.value.push({ id: ++id, role: 'assistant', content: '已停止生成，可点击重新生成。' })
+    }
   }
   loading.value = false
 }
@@ -152,7 +169,22 @@ function clearChat() {
 
 async function copyMessage(content: string, msgId: number) {
   try {
-    await navigator.clipboard.writeText(content)
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(content)
+    } else {
+      const field = document.createElement('textarea')
+      field.value = content
+      field.style.position = 'fixed'
+      field.style.opacity = '0'
+      document.body.appendChild(field)
+      field.select()
+      try {
+        if (!document.execCommand('copy')) throw new Error('复制失败')
+      } finally {
+        field.remove()
+        textareaRef.value?.focus()
+      }
+    }
     copiedId.value = msgId
     if (copyTimer) clearTimeout(copyTimer)
     copyTimer = window.setTimeout(() => {
@@ -182,7 +214,7 @@ async function sendMessage(text = input.value) {
   const history: HistoryTurn[] = messages.value
     .filter((message) => !message.localOnly)
     .slice(-MAX_HISTORY)
-    .map((m) => ({ role: m.role, content: m.content }))
+    .map((m) => ({ role: m.role, content: Array.from(m.content).slice(0, 5000).join('') }))
 
   messages.value.push({ id: ++id, role: 'user', content: question })
   input.value = ''
@@ -221,7 +253,7 @@ async function sendMessage(text = input.value) {
           if (controller.signal.aborted) return
           const msg = messages.value.find((m) => m.id === assistantId)
           if (msg) {
-            if (!msg.content) msg.content = err
+            msg.content += `${msg.content ? '\n\n' : ''}⚠️ ${err}，回答未完成，请重试。`
           } else {
             messages.value.push({ id: assistantId, role: 'assistant', content: err })
           }
@@ -236,7 +268,7 @@ async function sendMessage(text = input.value) {
     const fallback = error instanceof Error ? error.message : '抱歉，回答生成失败，请稍后重试。'
     const msg = messages.value.find((m) => m.id === assistantId)
     if (msg) {
-      if (!msg.content) msg.content = fallback
+      msg.content += `${msg.content ? '\n\n' : ''}⚠️ ${fallback}，回答未完成，请重试。`
     } else {
       messages.value.push({ id: assistantId, role: 'assistant', content: fallback })
     }
@@ -340,6 +372,7 @@ function handleKeydown(event: KeyboardEvent) {
           @select="selectModule"
           @ask="sendMessage"
           @resume="resumeConversation"
+          @preview="previewSource = $event"
         />
 
         <template v-else>
@@ -357,9 +390,9 @@ function handleKeydown(event: KeyboardEvent) {
               <!-- 参考资料卡片 -->
               <div v-if="message.sources?.length" class="sources">
                 <span>参考资料</span>
-                <div v-for="source in message.sources" :key="source.source" class="source-chip">
-                  <BookOpen :size="13" /> {{ source.title }}
-                </div>
+                <button v-for="source in message.sources" :key="source.source" class="source-chip" type="button" :aria-label="`查看资料：${source.title}`" @click="previewSource = source.source">
+                  <BookOpen :size="13" aria-hidden="true" /> {{ source.title }}
+                </button>
               </div>
 
               <!-- 助手消息底部操作栏（复制、重新生成） -->
@@ -435,5 +468,6 @@ function handleKeydown(event: KeyboardEvent) {
         <p>内容由 AI 生成，重要信息请以学校官方发布为准</p>
       </footer>
     </section>
+    <SourcePreview v-if="previewSource" :key="previewSource" :source="previewSource" @close="previewSource = null" />
   </main>
 </template>

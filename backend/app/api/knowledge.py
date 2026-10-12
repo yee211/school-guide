@@ -2,7 +2,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, Query, status
 
 from app.rag.indexer import add_to_index
 from app.rag.loader import BACKEND_DIR, RAW_DATA_DIR
@@ -51,13 +51,13 @@ async def upload_document(
 
     if not content:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="上传的文件为空",
         )
 
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="文件不能超过 10 MB",
         )
 
@@ -69,7 +69,7 @@ async def upload_document(
         )
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
@@ -88,14 +88,19 @@ async def upload_document(
         for document in documents:
             document.metadata["source"] = source
 
-        uploaded_chunks = split_documents(documents)
+        uploaded_chunks = await asyncio.to_thread(split_documents, documents)
         if not uploaded_chunks:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="文件清洗后没有可索引的有效文本内容",
             )
 
-        target_path.write_bytes(content)
+        try:
+            with target_path.open("xb") as output:
+                output.write(content)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail="知识库中已经存在同名文件") from exc
+        structured_synced = True
 
         try:
             indexed_count = await asyncio.to_thread(
@@ -116,8 +121,9 @@ async def upload_document(
                         plan_rows,
                     )
             except Exception:
-                logger.warning(
-                    "结构化数据表同步跳过或失败，不影响向量知识库",
+                structured_synced = False
+                logger.error(
+                    "结构化数据同步失败：向量已更新，需要重新运行结构化导入",
                     exc_info=True,
                 )
         except Exception as exc:
@@ -130,8 +136,48 @@ async def upload_document(
             ) from exc
 
         return {
+            "structured_synced": structured_synced,
+            "warning": None if structured_synced else "结构化数据未同步，请联系管理员重新导入",
             "filename": filename,
             "uploaded_document_count": len(documents),
             "uploaded_chunk_count": len(uploaded_chunks),
             "total_indexed_chunk_count": indexed_count,
         }
+
+
+@router.get("/source")
+async def preview_source(source: str = Query(min_length=1, max_length=500)):
+    """Read only source files confined to the raw knowledge directory."""
+    normalized = source.replace("\\", "/")
+    if normalized.startswith("backend/"):
+        normalized = normalized[len("backend/"):]
+    if not normalized.startswith("data/raw/") or any(part in ("..", ".", "") for part in normalized.split("/")):
+        raise HTTPException(status_code=400, detail="无效的资料路径")
+    path = (BACKEND_DIR / normalized).resolve()
+    if not path.is_relative_to(RAW_DATA_DIR.resolve()):
+        raise HTTPException(status_code=400, detail="无效的资料路径")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="资料不存在或已更新")
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="暂不支持预览此格式")
+    if path.stat().st_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="资料较大，暂不支持在线预览")
+
+    def read_content():
+        data = path.read_bytes()
+        if path.suffix.lower() in {".md", ".txt", ".csv"}:
+            for encoding in ("utf-8-sig", "gb18030"):
+                try:
+                    return data.decode(encoding)
+                except UnicodeDecodeError:
+                    continue
+            raise ValueError("资料编码无法识别")
+        docs = load_uploaded_documents(path.name, data)
+        return "\n\n".join(doc.page_content for doc in docs)
+
+    try:
+        content = await asyncio.to_thread(read_content)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=422, detail="资料暂时无法预览") from exc
+    limit = 60000
+    return {"title": path.stem, "source": normalized, "content": content[:limit], "truncated": len(content) > limit}

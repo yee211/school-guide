@@ -51,3 +51,10 @@ HYBRID_CANDIDATE_COUNT = max(
     1,
     int(os.getenv("HYBRID_CANDIDATE_COUNT", "30")),
 )
+
+# Agentic retrieval budgets (final answer streaming has its own LLM timeout).
+AGENT_MAX_ROUNDS = max(1, min(10, int(os.getenv("AGENT_MAX_ROUNDS", "3"))))
+AGENT_MAX_TOOL_CALLS = max(1, min(20, int(os.getenv("AGENT_MAX_TOOL_CALLS", "6"))))
+AGENT_TIMEOUT_SECONDS = max(1.0, float(os.getenv("AGENT_TIMEOUT_SECONDS", "25")))
+AGENT_STEP_TIMEOUT_SECONDS = max(1.0, float(os.getenv("AGENT_STEP_TIMEOUT_SECONDS", "10")))
+AGENT_CONTEXT_CHARS = max(1000, int(os.getenv("AGENT_CONTEXT_CHARS", "12000")))

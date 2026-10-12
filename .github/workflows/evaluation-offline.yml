@@ -1,0 +1,29 @@
+name: Evaluation offline
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  evaluation:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      LLM_API_KEY: offline-test
+      LLM_MODEL_ID: offline-test
+      EMBEDDING_API_KEY: offline-test
+      EMBEDDING_MODEL_ID: offline-test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Offline RAG and evaluation contracts
+        working-directory: backend
+        run: python -m unittest scripts.test_agentic_rag scripts.test_answer_requirements scripts.test_query_router scripts.test_knowledge_presets scripts.test_evaluation_contracts scripts.test_bug_regressions
+      - name: Validate evaluation runners without provider calls
+        working-directory: backend
+        run: |
+          python -m scripts.evaluate_answers
+          python -m scripts.evaluate_retrieval_ab

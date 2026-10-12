@@ -313,3 +313,7 @@ button { cursor: pointer; }
   .knowledge-explorer .knowledge-tabs { margin-top: 16px; }
   .knowledge-explorer .welcome-copy { margin: 12px 0 16px; }
 }
+
+.source-link { padding: 0; border: 0; color: #326c98; background: transparent; font: inherit; text-align: left; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.source-chip { border: 0; font: inherit; cursor: pointer; }
+.source-link:focus-visible, .source-chip:focus-visible { outline: 3px solid #58a9e8; outline-offset: 3px; }

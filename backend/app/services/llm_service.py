@@ -43,6 +43,10 @@ class LLMService:
       """意图识别专用（可用更快的模型档位），返回绑定工具的 LLM。"""
       return self._intent_llm.bind_tools(tools)
 
+    def coverage_checker(self):
+      from app.agents.answer_requirements import CoverageReport
+      return self._intent_llm.with_structured_output(CoverageReport, method="function_calling")
+
     async def invoke(self, messages: list[BaseMessage]) -> str:
         try:
             response = await self._llm.ainvoke(messages)
@@ -73,11 +77,15 @@ class LLMService:
 
     async def stream(self, messages: list[BaseMessage]):
         """流式生成回答，逐段 yield 文本内容。"""
+        has_text = False
         try:
             async for chunk in self._llm.astream(messages):
                 content = chunk.content
                 if isinstance(content, str) and content:
+                    has_text = has_text or bool(content.strip())
                     yield content
+            if not has_text:
+                raise LLMEmptyResponseError("模型没有返回有效内容")
 
         except openai.AuthenticationError as exc:
             logger.error("LLM authentication failed")

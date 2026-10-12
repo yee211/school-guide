@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import Literal
@@ -28,7 +29,7 @@ class HistoryMessage(BaseModel):
 class ChatRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
     message: str = Field(min_length=1, max_length=5000)
-    history: list[HistoryMessage] = Field(default_factory=list)
+    history: list[HistoryMessage] = Field(default_factory=list, max_length=10)
 
 class SourceResponse(BaseModel):
     title: str
@@ -111,8 +112,27 @@ async def chat_stream(request: ChatRequest):
 
     async def event_stream():
         try:
-            async for event in school_agent.stream(request.message, request.history):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            stream = school_agent.stream(request.message, request.history).__aiter__()
+            pending = None
+            try:
+                while True:
+                    if pending is None:
+                        pending = asyncio.create_task(anext(stream))
+                    done, _ = await asyncio.wait({pending}, timeout=10.0)
+                    if not done:
+                        yield ": heartbeat\n\n"
+                        continue
+                    try:
+                        event = pending.result()
+                    except StopAsyncIteration:
+                        break
+                    pending = None
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            finally:
+                if pending is not None:
+                    pending.cancel()
+                    await asyncio.gather(pending, return_exceptions=True)
+                await stream.aclose()
         except LLMAuthenticationError:
             yield _sse_error("模型服务配置异常，请联系管理员")
         except LLMTimeoutError:

@@ -98,6 +98,7 @@ def _metadata_filter_clause(
         ("subject_categories", filters.subject_categories),
         ("provinces", filters.provinces),
         ("majors", filters.majors),
+        ("groups", filters.groups),
     )
     for metadata_key, values in array_filters:
         if not values:
@@ -264,6 +265,7 @@ class PostgreSQLKnowledgeStore:
                 provinces=tuple(cached.get("provinces", ())),
                 majors=tuple(cached.get("majors", ())),
                 document_types=tuple(cached.get("document_types", ())),
+                groups=tuple(cached.get("groups", ())),
             )
             inject_jieba_vocabulary(catalog)
             return catalog
@@ -278,6 +280,7 @@ class PostgreSQLKnowledgeStore:
                 "provinces": list(catalog.provinces),
                 "majors": list(catalog.majors),
                 "document_types": list(catalog.document_types),
+                "groups": list(catalog.groups),
             },
         )
         return catalog
@@ -334,7 +337,11 @@ class PostgreSQLKnowledgeStore:
                             FROM public.school_knowledge_chunks
                             WHERE metadata ->> 'document_type' IS NOT NULL
                             ORDER BY 1
-                        ) AS document_types
+                        ) AS document_types,
+                        ARRAY(
+                            SELECT DISTINCT jsonb_array_elements_text(COALESCE(metadata -> 'groups', '[]'::jsonb))
+                            FROM public.school_knowledge_chunks ORDER BY 1
+                        ) AS groups
                     """
                 ).fetchone()
         except psycopg.errors.UndefinedTable:
@@ -348,6 +355,7 @@ class PostgreSQLKnowledgeStore:
             provinces=tuple(row["provinces"] or ()),
             majors=tuple(row["majors"] or ()),
             document_types=tuple(row["document_types"] or ()),
+            groups=tuple(row.get("groups") or ()),
         )
 
 
@@ -374,6 +382,11 @@ class PostgreSQLKnowledgeStore:
                     "All embeddings must have the same non-zero size"
                 )
 
+        inject_jieba_vocabulary(FilterCatalog(
+            majors=tuple({value for doc in documents for value in doc.metadata.get("majors", [])}),
+            groups=tuple({value for doc in documents for value in doc.metadata.get("groups", [])}),
+            provinces=tuple({value for doc in documents for value in doc.metadata.get("provinces", [])}),
+        ))
         tokenized_documents = [
             tokenize_for_search(document.page_content)
             for document in documents
@@ -403,7 +416,7 @@ class PostgreSQLKnowledgeStore:
         }
         desired_id_set = set(desired_ids)
 
-        with connect() as connection:
+        with connect(statement_timeout_ms=120000) as connection:
             connection.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 (REBUILD_LOCK_NAME,),

@@ -8,7 +8,7 @@ from langchain_core.documents import Document
 
 YEAR_PATTERN = re.compile(r"(?<!\d)(20\d{2})(?!\d)")
 
-GROUP_PATTERN = re.compile(r"(?:(物理|历史|艺术))?(\d{3})(?:专业)?组")
+GROUP_PATTERN = re.compile(r"(?<!\d)(?:(物理|历史|艺术))?(\d{2,4})(?:专业)?组")
 
 _SUBJECT_PREFIX = {"物理类": "物理", "历史类": "历史", "艺术类": "艺术"}
 
@@ -147,6 +147,7 @@ class RetrievalFilters:
                 self.provinces,
                 self.majors,
                 self.document_types,
+                self.groups,
             )
         )
 
@@ -263,6 +264,9 @@ _OVERVIEW_CATEGORIES = (
 
 def _classify_document_type(text: str) -> str:
     lowered = text.lower()
+    # Mixed campus-life chunks can mention the library without being library documents.
+    if "school_life" in lowered:
+        return "校园生活"
     if any(f"# {category}" in text for category in _NEWS_CATEGORIES):
         return "校园动态"
     if any(f"# {category}" in text for category in _OVERVIEW_CATEGORIES):
@@ -304,6 +308,10 @@ def enrich_document_metadata(document: Document) -> Document:
     if "省内" in source_context and "湖南省" not in provinces:
         provinces.append("湖南省")
     majors = _extract_majors(full_context)
+    groups = _extract_groups(full_context)
+    if len(subject_categories) == 1:
+        prefix = _SUBJECT_PREFIX.get(subject_categories[0], "")
+        groups = [prefix + group if group[0].isdigit() else group for group in groups]
     document_type = _classify_document_type(full_context)
     if (
         not provinces
@@ -315,6 +323,7 @@ def enrich_document_metadata(document: Document) -> Document:
 
     metadata.update(
         {
+            "groups": _ordered_unique([*groups, *(re.sub(r"^(物理|历史|艺术)", "", group) for group in groups)]),
             "years": years,
             "subject_categories": subject_categories,
             "provinces": provinces,

@@ -37,3 +37,7 @@ frontend/node_modules/
 # 本地部署与备份压缩包
 *.zip
 
+
+# Local agent state and accidental Windows null-device files
+.claude/
+nul

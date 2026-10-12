@@ -32,6 +32,8 @@ class QwenReranker:
         if not documents or top_k <= 0:
             return []
 
+        if not RERANKER_API_KEY:
+            raise RuntimeError("未配置 RERANKER_API_KEY，无法调用 Rerank API")
         if not RERANKER_BASE_URL:
             raise RuntimeError("未配置 RERANKER_BASE_URL，无法调用 Rerank API")
 
@@ -75,6 +77,8 @@ class QwenReranker:
                 ranked.append(documents[index])
             if len(ranked) >= top_k:
                 break
+        if not ranked:
+            raise ValueError("Rerank API returned no usable document indices")
         return ranked
 
 
