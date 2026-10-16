@@ -8,6 +8,7 @@ from langchain_core.messages import (
 from app.agents.answer_requirements import Clarification, admission_clarification, normalize_years
 from app.agents.agentic_rag import AgenticRAG
 from app.services.rag_service import SourceInfo, rag_service
+from app.structured.query import structured_query_service
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,10 @@ class QueryRouter:
 
     def __init__(self, llm_tools, coverage_checker=None) -> None:
         # 由 SchoolAgent 注入绑定两类检索工具的规划模型
-        self._agentic_rag = AgenticRAG(llm_tools, coverage_checker=coverage_checker)
+        self._agentic_rag = AgenticRAG(
+            llm_tools, coverage_checker=coverage_checker,
+            catalog_loader=structured_query_service.get_catalog,
+        )
 
     async def prepare(
         self,

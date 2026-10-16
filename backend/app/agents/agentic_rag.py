@@ -56,7 +56,8 @@ class RetrievalState:
 
 
 class AgenticRAG:
-    def __init__(self, planner, executor=None, coverage_checker=None):
+    def __init__(self, planner, executor=None, coverage_checker=None, *, catalog_loader=None):
+        self.catalog_loader = catalog_loader
         self.planner = planner
         self.coverage_checker = coverage_checker
         self.executor = executor or execute_retrieval
@@ -64,10 +65,22 @@ class AgenticRAG:
     async def prepare(self, question, history=None, *, search_query=None):
         state = RetrievalState()
         query = search_query or question
-        requirements = build_requirements(query)
-        checklist = "\n".join(f"{r.id}: {r.label}" for r in requirements)
         started = monotonic()
         deadline = started + AGENT_TIMEOUT_SECONDS
+        catalog = None
+        catalog_unavailable = False
+        if self.catalog_loader is not None:
+            try:
+                catalog = await asyncio.wait_for(
+                    asyncio.to_thread(self.catalog_loader),
+                    timeout=max(0, min(2.0, deadline - monotonic())),
+                )
+            except Exception:
+                logger.warning("Requirement catalog unavailable; retaining original query")
+                catalog_unavailable = True
+        requirements = (build_requirements(query, catalog, catalog_unavailable=catalog_unavailable)
+                        if self.catalog_loader is not None else build_requirements(query))
+        checklist = "\n".join(f"{r.id}: {r.label}" for r in requirements)
         messages = [
             SystemMessage(content=AGENTIC_RETRIEVAL_PROMPT),
             *RAGService._history_to_messages(history),
@@ -105,6 +118,30 @@ class AgenticRAG:
             state.cache[key] = text
             return text
 
+        async def fallback_retrieval():
+            # Preserve requirement-specific tools and conditions when planning fails.
+            candidates = [(r.tool, r.query) for r in requirements]
+            if not candidates:
+                candidates = [("search_school_knowledge", query)]
+            seen = set(state.cache)
+            pending = []
+            for name, value in candidates:
+                value = " ".join(value.split())
+                key = (name, value)
+                if key not in seen:
+                    seen.add(key)
+                    pending.append(key)
+            pending = pending[:max(0, AGENT_MAX_TOOL_CALLS - state.calls)]
+            if monotonic() >= deadline:
+                return
+            results = await asyncio.gather(*[
+                execute(name, {"question" if name == "query_admission_data" else "query": value})
+                for name, value in pending
+            ], return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
         async def assess():
             if not self.coverage_checker or len(requirements) < 2:
                 return []
@@ -132,7 +169,7 @@ class AgenticRAG:
                     logger.warning("Retrieval planner failed", exc_info=True)
                     state.notes.append("检索规划失败，使用已取得证据。")
                     if not state.evidence and not state.cache and state.calls < AGENT_MAX_TOOL_CALLS:
-                        await execute("search_school_knowledge", {"query": query})
+                        await fallback_retrieval()
                     break
                 # Do not retain free-form planner text or unbounded batches.
                 response = response.model_copy(update={
@@ -143,7 +180,7 @@ class AgenticRAG:
                 if not calls:
                     # Never accept an ungrounded school answer from the planner.
                     if not state.evidence and not state.cache and state.calls < AGENT_MAX_TOOL_CALLS:
-                        await execute("search_school_knowledge", {"query": query})
+                        await fallback_retrieval()
                         messages.append(HumanMessage(content="已执行默认检索：\n" + "\n".join(state.cache.values())))
                         continue
                     if self.coverage_checker and len(requirements) > 1:
@@ -182,10 +219,10 @@ class AgenticRAG:
             else:
                 state.notes.append("检索达到轮次上限，可能仍有未覆盖的问题。")
         except TimeoutError:
-            # A timed-out planning step may leave time for a single safe retrieval.
+            # A timed-out planning step may leave budget for requirement-specific retrieval.
             if not state.evidence and not state.cache and state.calls < AGENT_MAX_TOOL_CALLS and monotonic() < deadline:
                 try:
-                    await execute("search_school_knowledge", {"query": query})
+                    await fallback_retrieval()
                 except TimeoutError:
                     pass
             state.notes.append("检索达到时间上限，可能仍有未覆盖的问题。")

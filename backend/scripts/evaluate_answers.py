@@ -1,4 +1,4 @@
-"""Single-pass hybrid RAG vs current routed Agentic RAG, using real providers.
+"""Single-pass hybrid RAG vs unified Agentic RAG, using real providers.
 Dry-run only validates cases. Live mode explicitly requires --live.
 """
 import argparse

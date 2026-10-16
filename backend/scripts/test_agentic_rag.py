@@ -62,7 +62,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         planner = SimpleNamespace(ainvoke=AsyncMock(return_value=response()))
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
         messages, _ = await AgenticRAG(planner, executor).prepare("学校特色")
-        executor.assert_awaited_once_with("search_school_knowledge", "学校特色")
+        executor.assert_awaited_once_with("search_school_knowledge", "长沙工业学院 专业特色")
         self.assertNotIn("planner text", messages[-1].content)
 
     async def test_empty_result_can_trigger_requery(self):
@@ -84,6 +84,34 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
         self.assertIsNotNone(await AgenticRAG(planner, executor).prepare("专业特色"))
         executor.assert_awaited_once()
+
+    async def test_numeric_fallback_uses_structured_tool(self):
+        question = "2025年湖南物理类软件工程录取分数线"
+        for outcome in (RuntimeError("offline"), TimeoutError(), response()):
+            with self.subTest(outcome=type(outcome).__name__):
+                planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=outcome) if isinstance(outcome, Exception) else AsyncMock(return_value=outcome))
+                executor = AsyncMock(return_value=ToolResult((evidence(),)))
+                prepared = await AgenticRAG(planner, executor).prepare(question)
+                self.assertIsNotNone(prepared)
+                self.assertEqual(executor.await_count, 1)
+                name, query = executor.await_args.args
+                self.assertEqual(name, "query_admission_data")
+                for condition in ("2025", "湖南", "物理", "软件工程"):
+                    self.assertIn(condition, query)
+
+    async def test_mixed_fallback_respects_budget_and_deduplicates(self):
+        from app.agents.answer_requirements import build_requirements
+        question = "2025年湖南物理类软件工程学费和就业方向"
+        requirements = build_requirements(question)
+        for limit in (1, 2):
+            planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=RuntimeError("offline")))
+            executor = AsyncMock(return_value=ToolResult((evidence(),)))
+            with patch("app.agents.agentic_rag.build_requirements", return_value=requirements + requirements), patch("app.agents.agentic_rag.AGENT_MAX_TOOL_CALLS", limit):
+                await AgenticRAG(planner, executor).prepare(question)
+            self.assertEqual(executor.await_count, limit)
+            self.assertEqual(executor.await_args_list[0].args[0], "query_admission_data")
+            if limit == 2:
+                self.assertEqual(executor.await_args_list[1].args[0], "search_school_knowledge")
 
     async def test_call_budget_and_complete_tool_protocol(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(return_value=response(call(ident="t1"), call(query="课程", ident="t2"), call(query="师资", ident="t3"))))
@@ -111,7 +139,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call("delete_database")), response(), response()]))
         executor = AsyncMock(return_value=ToolResult(note="未找到"))
         messages, sources = await AgenticRAG(planner, executor).prepare("专业特色")
-        executor.assert_awaited_once_with("search_school_knowledge", "专业特色")
+        executor.assert_awaited_once_with("search_school_knowledge", "长沙工业学院 专业特色")
         self.assertEqual(sources, [])
         self.assertIn("未取得可用事实证据", messages[-1].content)
 

@@ -75,8 +75,11 @@ class Requirement:
     provinces: tuple[str, ...]
     subjects: tuple[str, ...]
     groups: tuple[str, ...] = ()
+    scope_resolved: bool = True
 
     def accepts(self, evidence):
+        if not self.scope_resolved:
+            return False
         if self.field:
             row = evidence.facts
             if not row or row.get(self.field) is None or row.get(self.field) == "":
@@ -96,9 +99,13 @@ class Requirement:
         return True
 
 
-def build_requirements(query):
+def build_requirements(query, catalog=None, *, catalog_unavailable=False):
     query = normalize_years(query)
-    filters = infer_retrieval_filters(query, FilterCatalog())
+    filters = infer_retrieval_filters(query, catalog or FilterCatalog())
+    aggregate = bool(re.search(r"各专业|所有专业|全部专业|各组|各专业组|所有专业组|全部专业组", query))
+    unresolved = not filters.majors and not filters.groups and not aggregate and (
+        catalog_unavailable or ("专业" in query and query.strip() not in ("专业特色", "专业优势", "专业就业方向", "专业课程"))
+    )
     metrics = [m for m in METRICS if re.search(m[1], query)]
     majors = filters.majors or ("",)
     result = []
@@ -109,10 +116,10 @@ def build_requirements(query):
                 context = " ".join(v for v in (year, province, subject, group) if v)
                 result.append(Requirement(
                     f"r{len(result)+1}", f"{context + ' ' if context else ''}{major or '学校'}：{label}",
-                    f"{context} {major or '长沙工业学院'} {label}".strip(),
+                    (query if unresolved else f"{context} {major or '长沙工业学院'} {label}".strip()),
                     "query_admission_data" if field else "search_school_knowledge",
                     field, major, (year,) if year else (), (province,) if province else (),
-                    (subject,) if subject else (), (group,) if group else (),
+                    (subject,) if subject else (), (group,) if group else (), not unresolved,
                 ))
                 if len(result) >= 20:
                     return result

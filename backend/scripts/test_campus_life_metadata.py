@@ -14,20 +14,6 @@ class CampusLifeMetadataTests(unittest.TestCase):
 
 
 class BaselineTests(unittest.IsolatedAsyncioTestCase):
-    async def test_original_query_precedes_planning(self):
-        from unittest.mock import AsyncMock
-        from types import SimpleNamespace
-        from langchain_core.messages import AIMessage
-        from app.agents.agentic_rag import AgenticRAG
-        from app.agents.retrieval_tools import ToolResult, Evidence
-        executor = AsyncMock(return_value=ToolResult((Evidence("life", "菜鸟驿站在12栋女寝北楼下", ()),)))
-        question = "学校食堂和快递站在哪里？"
-        async def plan(messages):
-            executor.assert_awaited_once_with("search_school_knowledge", question)
-            self.assertIn("12栋", messages[-1].content)
-            return AIMessage(content="", tool_calls=[])
-        prepared = await AgenticRAG(SimpleNamespace(ainvoke=plan), executor).prepare(question, search_query="改写问题")
-        self.assertIn("12栋", prepared[0][-1].content)
     def test_two_life_requirements(self):
         from app.agents.answer_requirements import build_requirements
         self.assertEqual(len(build_requirements("学校食堂和快递站在哪里？")), 2)

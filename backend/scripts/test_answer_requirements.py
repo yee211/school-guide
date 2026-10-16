@@ -28,6 +28,21 @@ def supported(req_id, *keys):
 
 
 class RequirementTests(unittest.TestCase):
+    def test_dynamic_major_rejects_other_major_row(self):
+        from app.rag.metadata import FilterCatalog
+        reqs = build_requirements("2025年湖南物理类生物医学工程专业学费", FilterCatalog(majors=("生物医学工程",)))
+        self.assertEqual(reqs[0].major, "生物医学工程")
+        correct = dict(major="生物医学工程", year=2025, province="湖南省", subject_category="物理类", tuition=5800)
+        self.assertTrue(reqs[0].accepts(item("ok", "学费表", correct)))
+        self.assertFalse(reqs[0].accepts(item("wrong", "学费表", {**correct, "major": "软件工程"})))
+
+    def test_unresolved_major_preserves_query_and_cannot_claim_coverage(self):
+        query = "2025年湖南物理类生物医学工程专业学费"
+        reqs = build_requirements(query, catalog_unavailable=True)
+        self.assertEqual(reqs[0].query, query)
+        self.assertFalse(reqs[0].scope_resolved)
+        self.assertFalse(reqs[0].accepts(item("wrong", "学费表", dict(tuition=5800))))
+
     def test_two_majors_three_metrics_produce_six_items(self):
         requirements = build_requirements("2025年湖南物理类比较软件工程和人工智能的学费、招生人数、就业方向")
         self.assertEqual(len(requirements), 6)
@@ -94,6 +109,25 @@ class RequirementTests(unittest.TestCase):
 
 
 class CoverageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_agent_loads_dynamic_catalog_before_building_requirements(self):
+        from app.rag.metadata import FilterCatalog
+        loader = unittest.mock.Mock(return_value=FilterCatalog(majors=("生物医学工程",)))
+        planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=TimeoutError()))
+        executor = AsyncMock(return_value=ToolResult(note="未找到"))
+        await AgenticRAG(planner, executor, catalog_loader=loader).prepare("2025年湖南物理类生物医学工程专业学费")
+        loader.assert_called_once()
+        executor.assert_awaited_once()
+        self.assertIn("生物医学工程", executor.await_args.args[1])
+        self.assertEqual(executor.await_args.args[0], "query_admission_data")
+
+    async def test_catalog_failure_keeps_unknown_major_in_fallback(self):
+        query = "2025年湖南物理类生物医学工程专业学费"
+        planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=TimeoutError()))
+        executor = AsyncMock(return_value=ToolResult(note="未找到"))
+        loader = unittest.mock.Mock(side_effect=RuntimeError("catalog unavailable"))
+        await AgenticRAG(planner, executor, catalog_loader=loader).prepare(query)
+        executor.assert_awaited_once_with("query_admission_data", query)
+
     async def test_premature_stop_triggers_missing_item_lookup(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(return_value=AIMessage(content="")))
         doc = item("doc", "软件工程就业方向：软件开发")
