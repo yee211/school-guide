@@ -54,14 +54,14 @@ async def execute_retrieval(name: str, query: str) -> ToolResult:
 
 @tool
 async def search_school_knowledge(query: str) -> str:
-    """检索长沙工业学院的专业特色、就业方向、校园设施、政策等文档。query 必须是完整查询。"""
+    """检索长沙工业学院的专业特色、就业方向、课程、校园设施和政策说明。query 为保留已知专业及条件的完整自然语言子问题；精确招生数字优先使用 query_admission_data。"""
     result = await execute_retrieval("search_school_knowledge", query)
     return "\n\n".join(item.content for item in result.evidence) or result.note
 
 
 @tool
 async def query_admission_data(question: str) -> str:
-    """查询长沙工业学院的分数线、位次、招生人数、学费。question 须含已知年份、省份、科类、专业；不改变指定年份。"""
+    """查询长沙工业学院的录取分数、投档线、位次、招生人数、学费、学制和选科要求。question 为自然语言子问题，保留已知年份、省份、科类、专业或专业组及所需数字口径，不猜测缺失条件、不更换年份、不生成 SQL。"""
     result = await execute_retrieval("query_admission_data", question)
     return "\n\n".join(item.content for item in result.evidence) or result.note
 

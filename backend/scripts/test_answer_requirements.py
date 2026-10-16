@@ -130,9 +130,9 @@ class CoverageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_clarification_stream_avoids_model_and_database(self):
         router = QueryRouter(None)
-        with patch.object(router, "_fast_structured_question", AsyncMock()) as fast, patch("app.agents.school_agent.llm_service.stream") as stream:
+        with patch.object(router._agentic_rag, "prepare", AsyncMock()) as agent, patch("app.agents.school_agent.llm_service.stream") as stream:
             events = [e async for e in SchoolAgent(router).stream("计算机多少分能上")]
-        fast.assert_not_awaited()
+        agent.assert_not_awaited()
         stream.assert_not_called()
         self.assertEqual([e["type"] for e in events], ["delta", "done"])
         self.assertEqual(events[-1]["sources"], [])
@@ -140,9 +140,9 @@ class CoverageTests(unittest.IsolatedAsyncioTestCase):
     async def test_history_resolved_before_asking_again(self):
         router = QueryRouter(None)
         history = [SimpleNamespace(role="user", content="2025年湖南物理类软件工程分数线")]
-        with patch("app.agents.query_router.rag_service.contextualize_query", AsyncMock(return_value="2025年湖南物理类人工智能分数线")), patch.object(router, "_fast_structured_question", AsyncMock(return_value="hit")), patch.object(router, "_fast_structured_messages", AsyncMock(return_value=None)) as fast:
+        with patch("app.agents.query_router.rag_service.contextualize_query", AsyncMock(return_value="2025年湖南物理类人工智能分数线")), patch.object(router._agentic_rag, "prepare", AsyncMock(return_value=None)) as agent:
             await router.prepare("人工智能呢", history)
-        fast.assert_awaited_once_with("人工智能呢", history, search_query="2025年湖南物理类人工智能分数线")
+        agent.assert_awaited_once_with("人工智能呢", history, search_query="2025年湖南物理类人工智能分数线")
 
 
 if __name__ == "__main__":

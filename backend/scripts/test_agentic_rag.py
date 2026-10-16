@@ -13,7 +13,6 @@ from app.agents.agentic_rag import AgenticRAG, RetrievalState
 from app.agents.retrieval_tools import Evidence, ToolResult, execute_retrieval
 from app.services.rag_service import SourceInfo
 from app.agents.query_router import QueryRouter
-from app.rag.metadata import FilterCatalog
 
 
 def evidence(key="one", source="data/raw/专业.md", content="2026年软件工程专业特色"):
@@ -30,10 +29,21 @@ def response(*calls):
 
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_planner_runs_before_any_retrieval(self):
+        order = []
+        async def plan(messages):
+            order.append("plan")
+            return response(call("query_admission_data", "软件工程招生计划")) if len(order) == 1 else response()
+        async def execute(name, query):
+            order.append(name)
+            return ToolResult((evidence(),))
+        await AgenticRAG(SimpleNamespace(ainvoke=plan), execute).prepare("软件工程招生计划")
+        self.assertEqual(order, ["plan", "query_admission_data", "plan"])
+
     async def test_mixed_question_uses_two_tools_and_merges_sources(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call("query_admission_data", "2026软件工程学费")), response(call(ident="t2")), response()]))
         executor = AsyncMock(side_effect=[ToolResult((evidence("row", "plans.md", "学费5800元"),)), ToolResult((evidence(),))])
-        messages, sources = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("软件工程的学费和特色")
+        messages, sources = await AgenticRAG(planner, executor).prepare("软件工程的学费和特色")
         self.assertEqual(executor.await_count, 2)
         self.assertEqual(len(sources), 2)
         self.assertIn("5800", messages[-1].content)
@@ -43,7 +53,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_query_reuses_result_and_deduplicates_evidence(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call()), response(call(ident="t2")), response()]))
         executor = AsyncMock(return_value=ToolResult((evidence(), evidence())))
-        messages, sources = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业特色")
+        messages, sources = await AgenticRAG(planner, executor).prepare("专业特色")
         executor.assert_awaited_once()
         self.assertEqual(len(sources), 1)
         self.assertEqual(messages[-1].content.count("[资料"), 1)
@@ -51,42 +61,42 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_no_tools_cannot_answer_from_model_memory(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(return_value=response()))
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
-        messages, _ = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("学校特色")
+        messages, _ = await AgenticRAG(planner, executor).prepare("学校特色")
         executor.assert_awaited_once_with("search_school_knowledge", "学校特色")
         self.assertNotIn("planner text", messages[-1].content)
 
     async def test_empty_result_can_trigger_requery(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call()), response(call(query="软件工程培养方向", ident="t2")), response()]))
         executor = AsyncMock(side_effect=[ToolResult(note="未找到"), ToolResult((evidence(),))])
-        prepared = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业特色")
+        prepared = await AgenticRAG(planner, executor).prepare("专业特色")
         self.assertIsNotNone(prepared)
         self.assertEqual(executor.await_count, 2)
 
     async def test_tool_failure_allows_other_tool(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call()), response(call("query_admission_data", "软件工程人数", "t2")), response()]))
         executor = AsyncMock(side_effect=[RuntimeError("offline"), ToolResult((evidence(),))])
-        messages, _ = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业人数和特色")
+        messages, _ = await AgenticRAG(planner, executor).prepare("专业人数和特色")
         self.assertIn("工具执行失败", messages[-1].content)
         self.assertEqual(executor.await_count, 2)
 
     async def test_planner_failure_uses_default_retrieval(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=RuntimeError("offline")))
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
-        self.assertIsNotNone(await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业特色"))
+        self.assertIsNotNone(await AgenticRAG(planner, executor).prepare("专业特色"))
         executor.assert_awaited_once()
 
     async def test_call_budget_and_complete_tool_protocol(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(return_value=response(call(ident="t1"), call(query="课程", ident="t2"), call(query="师资", ident="t3"))))
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
         with patch("app.agents.agentic_rag.AGENT_MAX_TOOL_CALLS", 2):
-            await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业介绍")
+            await AgenticRAG(planner, executor).prepare("专业介绍")
         self.assertEqual(executor.await_count, 2)
         self.assertEqual(planner.ainvoke.await_count, 1)
 
     async def test_timeout_keeps_partial_evidence(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call()), TimeoutError()]))
         executor = AsyncMock(return_value=ToolResult((evidence(),)))
-        messages, sources = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业特色")
+        messages, sources = await AgenticRAG(planner, executor).prepare("专业特色")
         self.assertEqual(len(sources), 1)
         self.assertIn("时间上限", messages[-1].content)
 
@@ -95,24 +105,30 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         async def slow(*args):
             await asyncio.sleep(1)
         with patch("app.agents.agentic_rag.AGENT_TIMEOUT_SECONDS", 0.02):
-            self.assertIsNone(await AgenticRAG(planner, slow, seed_retrieval=False).prepare("专业特色"))
+            self.assertIsNone(await AgenticRAG(planner, slow).prepare("专业特色"))
 
     async def test_invalid_tool_does_not_execute(self):
         planner = SimpleNamespace(ainvoke=AsyncMock(side_effect=[response(call("delete_database")), response(), response()]))
         executor = AsyncMock(return_value=ToolResult(note="未找到"))
-        messages, sources = await AgenticRAG(planner, executor, seed_retrieval=False).prepare("专业特色")
+        messages, sources = await AgenticRAG(planner, executor).prepare("专业特色")
         executor.assert_awaited_once_with("search_school_knowledge", "专业特色")
         self.assertEqual(sources, [])
         self.assertIn("未取得可用事实证据", messages[-1].content)
 
-    async def test_mixed_question_bypasses_fast_route(self):
-        with patch("app.agents.query_router.structured_query_service.get_catalog") as catalog:
-            self.assertIsNone(await QueryRouter._fast_structured_question("软件工程招生人数和就业方向"))
-            catalog.assert_not_called()
-
-    async def test_simple_numeric_question_keeps_fast_route(self):
-        with patch("app.agents.query_router.structured_query_service.get_catalog", return_value=FilterCatalog(majors=("软件工程",))):
-            self.assertEqual(await QueryRouter._fast_structured_question("软件工程招生计划"), "软件工程招生计划")
+    async def test_all_question_types_enter_agent(self):
+        questions = (
+            "2025年湖南物理类软件工程录取分数线",
+            "软件工程招生人数和就业方向",
+            "2025年湖南物理类环境工程录取分数线",
+            "2025年湖南物理类软件工程录取分是多少？这个分数我有机会吗？",
+            "宿舍环境怎么样",
+        )
+        for question in questions:
+            with self.subTest(question=question):
+                router = QueryRouter(None)
+                with patch.object(router._agentic_rag, "prepare", AsyncMock(return_value=None)) as agent:
+                    await router.prepare(question)
+                agent.assert_awaited_once_with(question, None, search_query=question)
 
     async def test_sources_only_include_admitted_evidence(self):
         state = RetrievalState()
@@ -140,17 +156,12 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e["type"] for e in events], ["delta", "delta", "done"])
         self.assertEqual(events[-1]["sources"], [{"title": "专业", "source": "major.md"}])
 
-    async def test_empty_fast_query_enters_agent(self):
+    async def test_rewrite_preserves_mixed_original_question_for_agent(self):
         router = QueryRouter(None)
-        with patch.object(router, "_structured_tool_result", AsyncMock(return_value=None)), patch.object(router._agentic_rag, "prepare", AsyncMock(return_value=None)) as agent:
-            await router._fast_structured_messages("软件工程招生计划", None)
-        agent.assert_awaited_once_with("软件工程招生计划", None, search_query="软件工程招生计划")
-
-    async def test_rewrite_cannot_send_mixed_question_to_fast_path(self):
-        router = QueryRouter(None)
-        with patch.object(router, "_fast_structured_question", AsyncMock(return_value=None)) as fast, patch("app.agents.query_router.rag_service.contextualize_query", AsyncMock(return_value="软件工程招生计划")), patch.object(router._agentic_rag, "prepare", AsyncMock(return_value=None)):
-            await router.prepare("软件工程招生计划和就业方向", [SimpleNamespace(role="user", content="软件工程")])
-        fast.assert_not_awaited()
+        history = [SimpleNamespace(role="user", content="软件工程")]
+        with patch("app.agents.query_router.rag_service.contextualize_query", AsyncMock(return_value="软件工程招生计划")), patch.object(router._agentic_rag, "prepare", AsyncMock(return_value=None)) as agent:
+            await router.prepare("软件工程招生计划和就业方向", history)
+        agent.assert_awaited_once_with("软件工程招生计划和就业方向", history, search_query="软件工程招生计划")
 
     async def test_document_tool_preserves_metadata(self):
         from langchain_core.documents import Document
